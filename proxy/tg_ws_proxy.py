@@ -428,6 +428,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
 _server_instance = None
 _server_stop_event = None
+_client_tasks: Set[asyncio.Task] = set()
 
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
@@ -437,6 +438,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     _ws_pool.reset()
     ws_blacklist.clear()
     dc_fail_until.clear()
+    _client_tasks.clear()
 
     if proxy_config.fallback_cfproxy:
         user = proxy_config.cfproxy_user_domain
@@ -451,7 +453,9 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     secret_bytes = bytes.fromhex(proxy_config.secret)
 
     def client_cb(r, w):
-        asyncio.create_task(_handle_client(r, w, secret_bytes))
+        task = asyncio.create_task(_handle_client(r, w, secret_bytes))
+        _client_tasks.add(task)
+        task.add_done_callback(_client_tasks.discard)
 
     server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
