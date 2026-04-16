@@ -12,14 +12,16 @@ RUN python -m venv "$VIRTUAL_ENV" \
     && "$VIRTUAL_ENV/bin/pip" install --upgrade pip setuptools wheel
 
 WORKDIR /app
-RUN "$VIRTUAL_ENV/bin/pip" install cryptography==46.0.7
+
+COPY requirements.txt .
+RUN "$VIRTUAL_ENV/bin/pip" install --no-cache-dir -r requirements.txt
 
 FROM python:3.14-slim AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.2" \
-      org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy"
+      org.opencontainers.image.version="1.3" \
+      org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -42,21 +44,13 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app proxy ./proxy
 COPY --chown=app:app LICENSE ./
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 USER app
 
 EXPOSE 1443/tcp
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "-c", "\
-    set -eu; \
-    set -- --host \"${PROXY_HOST}\" --port \"${PROXY_PORT}\" --buf-kb \"${PROXY_BUF}\" --pool-size \"${PROXY_POOL_SIZE}\"; \
-    if [ -n \"${PROXY_SECRET:-}\" ]; then \
-        set -- \"$@\" --secret \"${PROXY_SECRET}\"; \
-    fi; \
-    for dc in ${PROXY_DC_IPS}; do \
-        set -- \"$@\" --dc-ip \"$dc\"; \
-    done; \
-    exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py \"$@\" \
-", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 
 CMD []

@@ -1,0 +1,20 @@
+  tg-ws-proxy:
+    image: lordarrin/tg-ws-proxy:latest
+    container_name: tg-ws-proxy
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PROXY_HOST=192.168.1.1
+      - PROXY_PORT=1443
+      - PROXY_SECRET=
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+      - /home/app/.cache:noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '1'
