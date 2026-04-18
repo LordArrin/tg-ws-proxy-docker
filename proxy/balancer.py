@@ -29,7 +29,8 @@ class _Balancer:
 
     def get_domains_for_dc(self, dc_id: int) -> Iterator[str]:
         current_domain = self._dc_to_domain.get(dc_id)
-        yield current_domain
+        if current_domain is not None:
+            yield current_domain
 
         shuffled_domains = self.domains[:]
         random.shuffle(shuffled_domains)

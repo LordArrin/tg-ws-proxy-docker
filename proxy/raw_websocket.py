@@ -25,7 +25,7 @@ _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 class WsHandshakeError(Exception):
     def __init__(self, status_code: int, status_line: str,
-                 headers: dict = None, location: str = None):
+                 headers: Optional[dict] = None, location: Optional[str] = None):
         self.status_code = status_code
         self.status_line = status_line
         self.headers = headers or {}

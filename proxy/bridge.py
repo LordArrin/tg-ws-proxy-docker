@@ -127,7 +127,7 @@ class MsgSplitter:
 
 
 async def do_fallback(reader, writer, relay_init, label,
-                       dc, is_media, media_tag,
+                       dc: int, is_media: bool, media_tag: str,
                        ctx: CryptoCtx, splitter=None):
     fallback_dst = DC_DEFAULT_IPS.get(dc)
     use_cf = proxy_config.fallback_cfproxy
@@ -141,9 +141,9 @@ async def do_fallback(reader, writer, relay_init, label,
     for method in methods:
         if method == 'cf':
             ok = await _cfproxy_fallback(
-                reader, writer, relay_init, label,
+                reader, writer, relay_init, label, ctx,
                 dc=dc, is_media=is_media,
-                ctx=ctx, splitter=splitter)
+                splitter=splitter)
             if ok:
                 return True
         elif method == 'tcp' and fallback_dst:
@@ -151,15 +151,16 @@ async def do_fallback(reader, writer, relay_init, label,
                      label, dc, media_tag, fallback_dst)
             ok = await _tcp_fallback(
                 reader, writer, fallback_dst, 443,
-                relay_init, label, dc=dc, is_media=is_media, ctx=ctx)
+                relay_init, label, ctx)
             if ok:
                 return True
     return False
 
 
 async def _cfproxy_fallback(reader, writer, relay_init, label,
-                            dc=None, is_media=False,
-                            ctx: CryptoCtx = None, splitter=None):
+                            ctx: CryptoCtx,
+                            dc: int, is_media: bool,
+                            splitter=None):
     media_tag = ' media' if is_media else ''
     ws = None
     chosen_domain = None
@@ -175,7 +176,7 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
             break
         except Exception as exc:
             log.warning("[%s] DC%d%s CF proxy failed: %s",
-                        label, dc, media_tag, exc)
+                        label, dc, media_tag, repr(exc))
 
     if ws is None:
         return False
@@ -185,34 +186,32 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
-    await bridge_ws_reencrypt(reader, writer, ws, label,
+    await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                                dc=dc, is_media=is_media,
-                               ctx=ctx, splitter=splitter)
+                               splitter=splitter)
     return True
 
 
-async def _tcp_fallback(reader, writer, dst, port, relay_init, label,
-                        dc=None, is_media=False, ctx: CryptoCtx = None):
+async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: CryptoCtx):
     try:
         rr, rw = await asyncio.wait_for(
             asyncio.open_connection(dst, port), timeout=10)
     except Exception as exc:
         log.warning("[%s] TCP fallback to %s:%d failed: %s",
-                    label, dst, port, exc)
+                    label, dst, port, repr(exc))
         return False
 
     stats.connections_tcp_fallback += 1
     rw.write(relay_init)
     await rw.drain()
-    await _bridge_tcp_reencrypt(reader, writer, rr, rw, label,
-                                dc=dc, is_media=is_media, ctx=ctx)
+    await _bridge_tcp_reencrypt(reader, writer, rr, rw, label, ctx)
     return True
 
 
 async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
+                               ctx: CryptoCtx,
                                dc=None, is_media=False,
-                               ctx: CryptoCtx = None,
-                               splitter: MsgSplitter = None):
+                               splitter: Optional[MsgSplitter] = None):
     """
     Bidirectional TCP(client) <-> WS(telegram) with re-encryption.
     client ciphertext → decrypt(clt_key) → encrypt(tg_key) → WS
@@ -309,8 +308,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
 
 
 async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
-                                label, dc=None, is_media=False,
-                                ctx: CryptoCtx = None):
+                                label, ctx: CryptoCtx):
     """Bidirectional TCP <-> TCP with re-encryption."""
 
     async def forward(src, dst_w, is_up):

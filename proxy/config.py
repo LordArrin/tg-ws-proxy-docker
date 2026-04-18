@@ -66,7 +66,7 @@ def _fetch_cfproxy_domain_list() -> List[str]:
         ]
         return [_dd(d) for d in encoded]
     except Exception as exc:
-        log.warning("Failed to fetch CF proxy domain list: %s", exc)
+        log.warning("Failed to fetch CF proxy domain list: %s", repr(exc))
         return []
 
 
