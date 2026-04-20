@@ -20,7 +20,7 @@ FROM python:3.14-slim AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.4" \
+      org.opencontainers.image.version="1.4.1" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -48,8 +48,6 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 USER app
-
-EXPOSE 1443/tcp
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 
