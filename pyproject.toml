@@ -42,7 +42,7 @@ dependencies = [
     "Pillow==10.4.0; platform_system == 'Windows' and python_version < '3.9'",
 
     "psutil==7.2.2; platform_system != 'Windows' or python_version >= '3.9'",
-    "cryptography==47.0.0; platform_system != 'Windows' or python_version >= '3.9'",
+    "cryptography==48.0.0; platform_system != 'Windows' or python_version >= '3.9'",
     "Pillow==12.2.0; (platform_system != 'Windows' or python_version >= '3.9') and platform_system != 'Darwin'",
 
     "customtkinter==5.2.2; platform_system != 'Darwin'",

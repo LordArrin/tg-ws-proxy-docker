@@ -20,7 +20,7 @@ FROM python:3.14-slim AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.5.2" \
+      org.opencontainers.image.version="1.6" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

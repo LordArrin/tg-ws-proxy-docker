@@ -18,7 +18,18 @@ CFPROXY_DOMAINS_URL = (
     "/.github/cfproxy-domains.txt"
 )
 
-_CFPROXY_ENC: List[str] = ['virkgj.com', 'vmmzovy.com', 'mkuosckvso.com', 'zaewayzmplad.com', 'twdmbzcm.com']
+_CFPROXY_ENC: List[str] = [
+    'virkgj.com', 
+    'vmmzovy.com', 
+    'mkuosckvso.com', 
+    'zaewayzmplad.com', 
+    'twdmbzcm.com',
+    'awzwsldi.com',
+    'clngqrflngqin.com',
+    'tjacxbqtj.com',
+    'bxaxtxmrw.com',
+    'dmohrsgmohcrwb.com'
+]
 _S = ''.join(chr(c) for c in (46, 99, 111, 46, 117, 107))
 
 
@@ -34,6 +45,7 @@ def _dd(s: str) -> str:
 
 
 CFPROXY_DEFAULT_DOMAINS: List[str] = [_dd(d) for d in _CFPROXY_ENC]
+_CFPROXY_MIN_VALID_DOMAINS = 3
 
 
 @dataclass
@@ -70,17 +82,64 @@ def _fetch_cfproxy_domain_list() -> List[str]:
         return []
 
 
+def _is_valid_domain(domain: str) -> bool:
+    if not domain or len(domain) > 253:
+        return False
+    if domain.startswith('.') or domain.endswith('.'):
+        return False
+    labels = domain.split('.')
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not label or len(label) > 63:
+            return False
+        if label[0] == '-' or label[-1] == '-':
+            return False
+        if not all(ch.isalnum() or ch == '-' for ch in label):
+            return False
+    # TLD should contain letters and be at least 2 chars.
+    tld = labels[-1]
+    if len(tld) < 2 or not any(ch.isalpha() for ch in tld):
+        return False
+    return True
+
+
+def _normalize_domain_pool(domains: List[str]) -> List[str]:
+    seen = set()
+    normalized: List[str] = []
+    for domain in domains:
+        item = domain.strip().lower()
+        if not _is_valid_domain(item):
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
 def refresh_cfproxy_domains() -> None:
     if proxy_config.cfproxy_user_domain:
         return
-    
-    fetched = _fetch_cfproxy_domain_list()
 
-    if fetched:
-        seen = set()
-        pool = [d for d in fetched if not (d in seen or seen.add(d))]
+    fetched = _fetch_cfproxy_domain_list()
+    pool = _normalize_domain_pool(fetched)
+    if len(pool) >= _CFPROXY_MIN_VALID_DOMAINS:
         balancer.update_domains_list(pool)
         log.info("CF proxy domain pool updated from GitHub (%d domains)", len(pool))
+        return
+
+    if fetched:
+        log.warning(
+            "Ignoring fetched CF proxy domains due to low-quality payload "
+            "(total=%d, valid=%d, required>=%d); keeping current domain pool",
+            len(fetched), len(pool), _CFPROXY_MIN_VALID_DOMAINS,
+        )
+    else:
+        log.warning(
+            "CF proxy domain refresh failed or empty response; "
+            "keeping current domain pool",
+        )
 
 
 _refresh_stop: threading.Event = threading.Event()
