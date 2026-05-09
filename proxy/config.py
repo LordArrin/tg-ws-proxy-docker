@@ -7,9 +7,10 @@ import threading
 
 from dataclasses import dataclass, field
 from typing import Dict, List
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from .balancer import balancer
+from .utils import build_github_opener
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -70,7 +71,7 @@ def _fetch_cfproxy_domain_list() -> List[str]:
     try:
         req = Request(CFPROXY_DOMAINS_URL + "?" + "".join(random.choices(string.ascii_letters, k=7)),
                        headers={'User-Agent': 'tg-ws-proxy'})
-        with urlopen(req, timeout=10) as resp:
+        with build_github_opener().open(req, timeout=10) as resp:
             text = resp.read().decode('utf-8', errors='replace')
         encoded = [
             line.strip() for line in text.splitlines()
