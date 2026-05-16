@@ -20,7 +20,7 @@ FROM python:3.14-slim AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.6.1" \
+      org.opencontainers.image.version="1.7" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -33,7 +33,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PROXY_BUF=1024 \
     PROXY_POOL_SIZE=8 \
     NO_CFPROXY= \
-    CFPROXY_PRIORITY= \
     CFPROXY_DOMAIN=
 
 RUN apt-get update \

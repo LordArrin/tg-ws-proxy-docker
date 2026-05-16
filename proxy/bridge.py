@@ -4,6 +4,7 @@ import struct
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from typing import Dict, List, Optional
+from urllib.parse import urlencode
 
 from .utils import *
 from .stats import stats
@@ -131,15 +132,26 @@ async def do_fallback(reader, writer, relay_init, label,
                        ctx: CryptoCtx, splitter=None):
     fallback_dst = DC_DEFAULT_IPS.get(dc)
     use_cf = proxy_config.fallback_cfproxy
-    cf_first = proxy_config.fallback_cfproxy_priority
+    worker_domain = proxy_config.cfproxy_worker_domain
 
-    methods: List[str] = ['tcp']
+    methods: List[str] = []
 
+    if worker_domain and fallback_dst:
+        methods.append('cf_worker')
     if use_cf:
-        methods.insert(0 if cf_first else 1, 'cf')
+        methods.append('cf')
+    if fallback_dst:
+        methods.append('tcp')
 
     for method in methods:
-        if method == 'cf':
+        if method == 'cf_worker' and fallback_dst:
+            ok = await _cfproxy_worker_fallback(
+                reader, writer, relay_init, label, ctx,
+                dc=dc, is_media=is_media, fallback_dst=fallback_dst,
+                splitter=splitter)
+            if ok:
+                return True
+        elif method == 'cf':
             ok = await _cfproxy_fallback(
                 reader, writer, relay_init, label, ctx,
                 dc=dc, is_media=is_media,
@@ -155,6 +167,42 @@ async def do_fallback(reader, writer, relay_init, label,
             if ok:
                 return True
     return False
+
+
+async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
+                                   ctx: CryptoCtx,
+                                   dc: int, is_media: bool,
+                                   fallback_dst: str,
+                                   splitter=None):
+    media_tag = ' media' if is_media else ''
+    worker_domain = proxy_config.cfproxy_worker_domain
+    if not worker_domain:
+        return False
+
+    query = urlencode({
+        'dst': fallback_dst,
+        'dc': str(dc),
+        'media': '1' if is_media else '0',
+    })
+    path = f'/apiws?{query}'
+
+    log.info("[%s] DC%d%s -> trying CF worker for %s",
+             label, dc, media_tag, fallback_dst)
+
+    try:
+        ws = await RawWebSocket.connect(worker_domain, worker_domain,
+                                        timeout=10.0, path=path)
+    except Exception as exc:
+        log.warning("[%s] DC%d%s CF worker failed: %s",
+                    label, dc, media_tag, repr(exc))
+        return False
+
+    stats.connections_cfproxy += 1
+    await ws.send(relay_init)
+    await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
+                               dc=dc, is_media=is_media,
+                               splitter=splitter)
+    return True
 
 
 async def _cfproxy_fallback(reader, writer, relay_init, label,

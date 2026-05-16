@@ -19,9 +19,6 @@ done
 if [[ "${NO_CFPROXY:-}" == "true" ]]; then
     ARGS+=(--no-cfproxy)
 else
-    if [[ -n "${CFPROXY_PRIORITY:-}" ]]; then
-        ARGS+=(--cfproxy-priority "$CFPROXY_PRIORITY")
-    fi
     if [[ -n "${CFPROXY_DOMAIN:-}" ]]; then
         ARGS+=(--cfproxy-domain "$CFPROXY_DOMAIN")
     fi

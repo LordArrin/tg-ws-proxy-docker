@@ -77,7 +77,10 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
                     self.sock, server_hostname=self._tunnel_host or self.host
                 )
 
-        return self.do_open(_Conn, req)
+        try:
+            return self.do_open(_Conn, req)
+        except Exception:
+            return super().https_open(req)
 
 
 def build_github_opener() -> urllib.request.OpenerDirector:

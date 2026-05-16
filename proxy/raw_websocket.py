@@ -78,7 +78,8 @@ class RawWebSocket:
         self._closed = False
 
     @staticmethod
-    async def connect(host: str, domain: str, timeout: float = 10.0) -> 'RawWebSocket':
+    async def connect(host: str, domain: str, timeout: float = 10.0,
+                      path: str = '/apiws') -> 'RawWebSocket':
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, 443, ssl=_ssl_ctx,
                                     server_hostname=domain),
@@ -89,7 +90,7 @@ class RawWebSocket:
         ws_key = base64.b64encode(os.urandom(16)).decode()
 
         req = (
-            f'GET /apiws HTTP/1.1\r\n'
+            f'GET {path} HTTP/1.1\r\n'
             f'Host: {domain}\r\n'
             f'Upgrade: websocket\r\n'
             f'Connection: Upgrade\r\n'
