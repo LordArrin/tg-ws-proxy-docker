@@ -22,6 +22,9 @@ else
     if [[ -n "${CFPROXY_DOMAIN:-}" ]]; then
         ARGS+=(--cfproxy-domain "$CFPROXY_DOMAIN")
     fi
+    if [[ -n "${CFPROXY_WORKER_DOMAIN:-}" ]]; then
+        ARGS+=(--cfproxy-worker-domain "$CFPROXY_WORKER_DOMAIN")
+    fi
 fi
 
 exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py "${ARGS[@]}"

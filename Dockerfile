@@ -33,7 +33,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PROXY_BUF=1024 \
     PROXY_POOL_SIZE=8 \
     NO_CFPROXY= \
-    CFPROXY_DOMAIN=
+    CFPROXY_DOMAIN= \
+    CFPROXY_WORKER_DOMAIN=
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini ca-certificates \
