@@ -13,5 +13,5 @@
 | `PROXY_BUF` | `1024` | Размер буфера в КБ |
 | `PROXY_POOL_SIZE` | `8` | Количество заготовленных соединений на каждый DC |
 | `NO_CFPROXY` | `false` | Отключить попытку [проксирования через Cloudflare](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
-| `CFPROXY_PRIORITY` | `true` | Пробовать проксировать через Cloudflare перед прямым TCP подключением |
 | `CFPROXY_DOMAIN` |    | Указать свой домен для проксирования через Cloudflare. [Подробнее тут](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
+| `CFPROXY_WORKER_DOMAIN` |    | Указать свой CF worker для проксирования через Cloudflare. [Подробнее тут](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) |
