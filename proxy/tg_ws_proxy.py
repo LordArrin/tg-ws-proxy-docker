@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+#
+import uvloop
+uvloop.install()
+#
 import os
 import sys
 import time
@@ -29,7 +33,6 @@ from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt
 from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
 from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
 from .balancer import balancer
-
 
 log = logging.getLogger('tg-mtproto-proxy')
 
