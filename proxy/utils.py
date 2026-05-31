@@ -2,7 +2,7 @@ import socket as _socket
 import urllib.request
 import http.client
 
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from urllib.request import Request
 
 
@@ -33,6 +33,23 @@ _GITHUB_IPS: Dict[str, str] = {
     "release-assets.githubusercontent.com": "185.199.109.133",
     "raw.githubusercontent.com": "185.199.109.133",
 }
+
+DC_DEFAULT_IPS: Dict[int, str] = {
+    1: '149.154.175.50',
+    2: '149.154.167.51',
+    3: '149.154.175.100',
+    4: '149.154.167.91',
+    5: '149.154.171.5',
+    203: '91.105.192.100'
+}
+
+
+def ws_domains(dc: int, is_media) -> List[str]:
+    if dc == 203:
+        dc = 2
+    if is_media is None or is_media:
+        return [f'kws{dc}-1.web.telegram.org', f'kws{dc}.web.telegram.org']
+    return [f'kws{dc}.web.telegram.org', f'kws{dc}-1.web.telegram.org']
 
 
 def human_bytes(n: int) -> str:

@@ -18,6 +18,16 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "buf_kb": 256,
     "pool_size": 4,
     "cfproxy": True,
-    "cfproxy_user_domain": "",
-    "cfproxy_worker_domain": "",
+    "cfproxy_user_domain": [],
+    "cfproxy_worker_domain": [],
 }
+
+
+def default_tray_config() -> Dict[str, Any]:
+    cfg = dict(_TRAY_DEFAULTS_COMMON)
+    cfg["secret"] = os.urandom(16).hex()
+
+    if sys.platform == "win32":
+        cfg["autostart"] = False
+
+    return cfg
