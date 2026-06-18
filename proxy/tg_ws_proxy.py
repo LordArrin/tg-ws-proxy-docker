@@ -573,8 +573,9 @@ def main():
                     help='Log to file with rotation (default: stderr only)')
     ap.add_argument('--log-max-mb', type=float, default=5, metavar='MB',
                     help='Max log file size in MB before rotation (default 5)')
-    ap.add_argument('--log-backups', type=int, default=0, metavar='N',
-                    help='Number of rotated log files to keep (default 0)')
+    ap.add_argument('--log-backups', type=int, default=1, metavar='N',
+                    help='Number of rotated log files to keep (min 1; '
+                         'rotation needs at least one backup to bound size)')
     ap.add_argument('--buf-kb', type=int, default=256, metavar='KB',
                     help='Socket send/recv buffer size in KB (default 256)')
     ap.add_argument('--pool-size', type=int, default=4, metavar='N',
@@ -637,7 +638,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
-    proxy_config.ws_keepalive_interval = max(0.0, args.ws_keepalive)
+    proxy_config.ws_keepalive_interval = max(0, args.ws_keepalive)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
@@ -650,11 +651,11 @@ def main():
     root.addHandler(console)
 
     if args.log_file:
-        fh = logging.handlers.RotatingFileHandler(
+        from utils.logging_setup import build_log_handler
+        fh = build_log_handler(
             args.log_file,
-            maxBytes=max(32 * 1024, int(args.log_max_mb * 1024 * 1024)),
-            backupCount=max(0, args.log_backups),
-            encoding='utf-8',
+            log_max_mb=args.log_max_mb,
+            backups=args.log_backups,
         )
         fh.setFormatter(log_fmt)
         root.addHandler(fh)

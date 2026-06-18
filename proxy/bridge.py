@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import struct
+import random
 
 from typing import List, Optional
 from urllib.parse import urlencode
@@ -179,6 +180,8 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
     worker_domains = proxy_config.cfproxy_worker_domains
     if not worker_domains:
         return False
+    
+    random.shuffle(worker_domains)
 
     for worker_domain in worker_domains:
         ws = await cf_worker_pool.get(dc, worker_domain, fallback_dst)
@@ -272,6 +275,9 @@ async def _ws_keepalive(ws, interval: float):
     """
     if interval <= 0:
         return
+    
+    interval = max(1.0, interval)  # reasonable minimum
+
     try:
         while True:
             await asyncio.sleep(interval)
@@ -351,7 +357,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
 
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
-    keepalive = asyncio.ensure_future(
+    keepalive = asyncio.create_task(
         _ws_keepalive(ws, proxy_config.ws_keepalive_interval))
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
