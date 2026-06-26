@@ -40,8 +40,12 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 DC_FAIL_COOLDOWN = 30.0
 WS_FAIL_TIMEOUT = 2.0
+FRONTING_COOLDOWN = 1800.0
+LISTENER_CHECK_INTERVAL = 5.0
+LISTENER_RESTART_DELAY = 1.0
 ws_blacklist: Set[str] = set()
 dc_fail_until: Dict[str, float] = {}
+fronting_until: float = 0.0
 
 
 def _try_handshake(handshake: bytes, secret: bytes) -> Optional[Tuple[int, bool, bytes, bytes]]:
@@ -249,6 +253,8 @@ def _build_crypto_ctx(client_dec_prekey_iv, secret, relay_init):
 
 
 async def _handle_client(reader, writer, secret: bytes):
+    global fronting_until
+    
     stats.connections_total += 1
     stats.connections_active += 1
     peer = writer.get_extra_info('peername')
@@ -320,17 +326,39 @@ async def _handle_client(reader, writer, secret: bytes):
         now = time.monotonic()
         fail_until = dc_fail_until.get(dc_key, 0)
         ws_timeout = WS_FAIL_TIMEOUT if now < fail_until else 10.0
+        fronting_active = now < fronting_until
 
         domains = ws_domains(dc, is_media)
         target = proxy_config.dc_redirects[dc]
         ws = None
         ws_failed_redirect = False
+        ws_timed_out = False
         all_redirects = True
 
         ws = await ws_pool.get(dc, is_media, target, domains)
         if ws:
             log.info("[%s] DC%d%s -> pool hit via %s",
                      label, dc, media_tag, target)
+        elif fronting_active:
+            # TODO: Move fronting logic into bridge.py where other fallbacks are handled
+            # Make less timeout, and don't try it next time for X seconds if it has failed as well
+            log.info("[%s] DC%d%s -> fronting / Host %s",
+                     label, dc, media_tag, domains[0])
+            try:
+                ws = await RawWebSocket.connect(target, domains[0],
+                                                timeout=10.0,
+                                                sni="sprinthost.ru")
+            except Exception as exc:
+                stats.ws_errors += 1
+                log.warning("[%s] DC%d%s fronting failed: %s",
+                            label, dc, media_tag, repr(exc))
+            if ws:
+                stats.connections_fronting += 1
+                fronting_until = now + FRONTING_COOLDOWN
+                ws_pool.fronting_until = fronting_until
+            else:
+                fronting_until = 0.0
+                ws_pool.fronting_until = 0.0
         else:
             for domain in domains:
                 url = f'wss://{domain}/apiws'
@@ -354,11 +382,37 @@ async def _handle_client(reader, writer, secret: bytes):
                         all_redirects = False
                         log.warning("[%s] DC%d%s WS handshake: %s",
                                     label, dc, media_tag, exc.status_line)
+                except asyncio.TimeoutError:
+                    stats.ws_errors += 1
+                    ws_timed_out = True
+                    log.warning("[%s] DC%d%s WS connect timed out via %s",
+                                label, dc, media_tag, domain)
                 except Exception as exc:
                     stats.ws_errors += 1
                     all_redirects = False
                     log.warning("[%s] DC%d%s WS connect failed: %s",
                                 label, dc, media_tag, repr(exc))
+
+        # Fronting fallback if WS timed out
+        # TODO: Move fronting logic into bridge.py where other fallbacks are handled
+        # and don't forget about WsPool fronting fallback
+        if ws is None and ws_timed_out and not fronting_active:
+            log.info("[%s] DC%d%s -> fronting fallback (Host %s)",
+                     label, dc, media_tag, domains[0])
+            try:
+                ws = await RawWebSocket.connect(target, domains[0],
+                                                timeout=10.0,
+                                                sni="sprinthost.ru")
+            except Exception as exc:
+                stats.ws_errors += 1
+                log.warning("[%s] DC%d%s fronting failed: %s",
+                            label, dc, media_tag, repr(exc))
+            if ws:
+                fronting_until = now + FRONTING_COOLDOWN
+                ws_pool.fronting_until = now + FRONTING_COOLDOWN
+                stats.connections_fronting += 1
+                log.info("[%s] DC%d%s fronting OK for %ds",
+                         label, dc, media_tag, int(FRONTING_COOLDOWN))
 
         # WS failed -> fallback
         if ws is None:
@@ -370,6 +424,8 @@ async def _handle_client(reader, writer, secret: bytes):
                 dc_fail_until[dc_key] = now + DC_FAIL_COOLDOWN
             else:
                 dc_fail_until[dc_key] = now + DC_FAIL_COOLDOWN
+                # TODO: may be don't try regular WS connection and do fallback instanstly
+                # instead of waiting for WS_FAIL_TIMEOUT and then fallback
                 log.info("[%s] DC%d%s WS cooldown for %ds",
                          label, dc, media_tag, int(DC_FAIL_COOLDOWN))
 
@@ -434,7 +490,7 @@ _client_tasks: Set[asyncio.Task] = set()
 
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
-    global _server_instance, _server_stop_event
+    global _server_instance, _server_stop_event, fronting_until
     _server_stop_event = stop_event
 
     ws_pool.reset()
@@ -442,6 +498,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     ws_blacklist.clear()
     dc_fail_until.clear()
     _client_tasks.clear()
+    fronting_until = 0.0
 
     if proxy_config.fallback_cfproxy:
         user = proxy_config.cfproxy_user_domains
@@ -516,37 +573,82 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     await ws_pool.warmup()
     await cf_worker_pool.warmup()
 
+    async def _quiet_cancel(t):
+        if not t.done():
+            t.cancel()
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
+
     try:
-        async with server:
-            if stop_event:
-                serve_task = asyncio.create_task(server.serve_forever())
-                stop_task = asyncio.create_task(stop_event.wait())
-                done, _ = await asyncio.wait(
-                    (serve_task, stop_task),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if stop_task in done:
-                    server.close()
-                    await server.wait_closed()
-                    if not serve_task.done():
-                        serve_task.cancel()
-                        try:
-                            await serve_task
-                        except asyncio.CancelledError:
-                            pass
-                else:
-                    stop_task.cancel()
-                    try:
-                        await stop_task
-                    except asyncio.CancelledError:
-                        pass
-            else:
-                await server.serve_forever()
+        while True:
+            serve_task = asyncio.create_task(server.serve_forever())
+            stop_task = (asyncio.create_task(stop_event.wait())
+                         if stop_event else None)
+
+            async def _listener_watchdog():
+                while True:
+                    await asyncio.sleep(LISTENER_CHECK_INTERVAL)
+                    socks = server.sockets
+                    if not socks or all(s.fileno() < 0 for s in socks):
+                        return
+
+            watchdog_task = asyncio.create_task(_listener_watchdog())
+            waiters = [serve_task, watchdog_task]
+            if stop_task is not None:
+                waiters.append(stop_task)
+
+            done, _ = await asyncio.wait(
+                waiters, return_when=asyncio.FIRST_COMPLETED)
+
+            if stop_task is not None and stop_task in done:
+                for task in list(_client_tasks):
+                    task.cancel()
+                if _client_tasks:
+                    await asyncio.gather(
+                        *_client_tasks, return_exceptions=True)
+                await _quiet_cancel(watchdog_task)
+                await _quiet_cancel(serve_task)
+                server.close()
+                await server.wait_closed()
+                break
+
+            await _quiet_cancel(watchdog_task)
+            await _quiet_cancel(serve_task)
+            log.warning(
+                "Listening socket died, restarting server")
+            server.close()
+            try:
+                await server.wait_closed()
+            except Exception:
+                pass
+            await asyncio.sleep(LISTENER_RESTART_DELAY)
+            try:
+                server = await asyncio.start_server(
+                    client_cb, proxy_config.host, proxy_config.port)
+            except OSError as exc:
+                log.error("Failed to restart server: %s", repr(exc))
+                break
+            _server_instance = server
+            for sock in server.sockets:
+                try:
+                    sock.setsockopt(
+                        _socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+                except (OSError, AttributeError):
+                    pass
+            log.warning("Server restored, listening on %s:%d",
+                        proxy_config.host, proxy_config.port)
     finally:
         log_stats_task.cancel()
         try:
             await log_stats_task
         except asyncio.CancelledError:
+            pass
+        try:
+            server.close()
+            await server.wait_closed()
+        except Exception:
             pass
     _server_instance = None
 
@@ -598,10 +700,6 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
-    ap.add_argument('--ws-keepalive', type=float, default=30.0, metavar='SEC',
-                    help='Seconds between WebSocket keepalive PINGs to the '
-                         'upstream (default 30, 0 to disable). Keeps idle '
-                         'sessions alive through NAT/firewall timeouts.')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -638,7 +736,6 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
-    proxy_config.ws_keepalive_interval = max(0, args.ws_keepalive)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
