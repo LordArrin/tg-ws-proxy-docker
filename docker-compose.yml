@@ -1,3 +1,4 @@
+services:
   tg-ws-proxy:
     image: lordarrin/tg-ws-proxy:latest
     container_name: tg-ws-proxy

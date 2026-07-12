@@ -22,7 +22,7 @@ FROM python:3.15-rc-slim AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.7.1" \
+      org.opencontainers.image.version="1.8.5" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -32,8 +32,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PROXY_PORT=1443 \
     PROXY_DC_IPS="2:149.154.167.220 4:149.154.167.220" \
     PROXY_SECRET= \
-    PROXY_BUF=1024 \
-    PROXY_POOL_SIZE=8 \
+    PROXY_BUF=4096 \
+    PROXY_POOL_SIZE=2 \
     NO_CFPROXY= \
     CFPROXY_DOMAIN= \
     CFPROXY_WORKER_DOMAIN=

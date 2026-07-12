@@ -4,8 +4,8 @@ set -euo pipefail
 ARGS=(
     --host "${PROXY_HOST:-0.0.0.0}"
     --port "${PROXY_PORT:-1443}"
-    --buf-kb "${PROXY_BUF:-1024}"
-    --pool-size "${PROXY_POOL_SIZE:-8}"
+    --buf-kb "${PROXY_BUF:-4096}"
+    --pool-size "${PROXY_POOL_SIZE:-2}"
 )
 
 if [[ -n "${PROXY_SECRET:-}" ]]; then
