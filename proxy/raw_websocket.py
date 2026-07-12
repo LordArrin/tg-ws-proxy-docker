@@ -40,14 +40,14 @@ class WsHandshakeError(Exception):
         return self.status_code in (301, 302, 303, 307, 308)
 
 
-def _xor_mask(data: bytes, mask: bytes) -> bytes:
-    if not data:
-        return data
-    n = len(data)
-    mask_rep = (mask * (n // 4 + 1))[:n]
-    return (int.from_bytes(data, 'big') ^
-            int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
+from itertools import cycle
 
+def _xor_mask(data: bytes, mask: bytes) -> bytes:
+    n = len(data)
+    result = bytearray(n)
+    for i in range(n):
+        result[i] = data[i] ^ mask[i & 3]
+    return bytes(result)
 
 def set_sock_opts(transport, buffer_size):
     sock = transport.get_extra_info('socket')
