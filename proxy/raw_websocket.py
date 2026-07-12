@@ -43,10 +43,11 @@ class WsHandshakeError(Exception):
 from itertools import cycle
 
 def _xor_mask(data: bytes, mask: bytes) -> bytes:
-    n = len(data)
-    result = bytearray(n)
-    for i in range(n):
-        result[i] = data[i] ^ mask[i & 3]
+    if not data:
+        return data
+    result = bytearray(len(data))
+    for i, byte in enumerate(data):
+        result[i] = byte ^ mask[i % 4]
     return bytes(result)
 
 def set_sock_opts(transport, buffer_size):
@@ -154,12 +155,15 @@ class RawWebSocket:
         self.writer.write(frame)
         await self.writer.drain()
 
+
     async def send_batch(self, parts: List[bytes]):
-        if self._closed:
+        if self._closed:        
             raise ConnectionError("WebSocket closed")
+        frames = []
         for part in parts:
-            self.writer.write(
-                self._build_frame(self.OP_BINARY, part, mask=True))
+            frames.append(self._build_frame(self.OP_BINARY, part, mask=True))
+    
+        self.writer.write(b''.join(frames))
         await self.writer.drain()
 
     async def recv(self) -> Optional[bytes]:
