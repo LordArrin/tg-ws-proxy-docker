@@ -8,6 +8,8 @@ services:
       - PROXY_HOST=192.168.1.1
       - PROXY_PORT=1443
       - PROXY_SECRET=
+      - CFPROXY_WORKER_DOMAIN=rough-unit-*.*.workers.dev
+      - KEEPALIVE=true
     security_opt:
       - no-new-privileges:true
     read_only: true
