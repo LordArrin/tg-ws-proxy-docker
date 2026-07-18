@@ -15,4 +15,4 @@
 | `NO_CFPROXY` | `false` | Отключить попытку [проксирования через Cloudflare](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
 | `CFPROXY_DOMAIN` |    | Указать свой [домен](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) для проксирования через Cloudflare. Можно указать несколько через повторение аргумента. |
 | `CFPROXY_WORKER_DOMAIN` |    | Указать свой [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) для проксирования через Cloudflare. Можно указать несколько через повторение аргумента. |
-| `KEEPALIVE` | `false` | Включить WS keepalive пинги - для предотвращения закрытия соединений при простое. Экспериментальная опция, отключена по умолчанию. |
+| `KEEPALIVE` | `false` | Включить WS keepalive пинги - для предотвращения закрытия соединений при простое. Экспериментальная опция, отключена по умолчанию. Для работы требуется настроить [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) |
