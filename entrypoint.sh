@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -euo pipefail
 
 ARGS=(
@@ -12,7 +13,7 @@ if [[ -n "${PROXY_SECRET:-}" ]]; then
     ARGS+=(--secret "$PROXY_SECRET")
 fi
 
-for dc in ${PROXY_DC_IPS}; do
+for dc in ${PROXY_DC_IPS:-}; do
     ARGS+=(--dc-ip "$dc")
 done
 
@@ -25,6 +26,11 @@ else
     if [[ -n "${CFPROXY_WORKER_DOMAIN:-}" ]]; then
         ARGS+=(--cfproxy-worker-domain "$CFPROXY_WORKER_DOMAIN")
     fi
+fi
+
+if [[ "${KEEPALIVE:-false}" == "true" && -n "${CFPROXY_WORKER_DOMAIN:-}" ]]; then
+    echo "[Entrypoint] Starting background keepalive agent..."
+    /opt/venv/bin/python -u proxy/keepalive.py &
 fi
 
 exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py "${ARGS[@]}"
