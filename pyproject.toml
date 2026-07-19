@@ -36,6 +36,8 @@ classifiers = [
 
 dependencies = [
     "cryptography>=49.0.0",
+    "uvloop>=0.22.1",
+    "websockets>=16.1.1",
 ]
 
 [project.scripts]
