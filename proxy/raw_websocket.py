@@ -40,15 +40,14 @@ class WsHandshakeError(Exception):
         return self.status_code in (301, 302, 303, 307, 308)
 
 
-from itertools import cycle
-
 def _xor_mask(data: bytes, mask: bytes) -> bytes:
     if not data:
         return data
-    result = bytearray(len(data))
-    for i, byte in enumerate(data):
-        result[i] = byte ^ mask[i % 4]
-    return bytes(result)
+    n = len(data)
+    mask_rep = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, 'big') ^
+            int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
+
 
 def set_sock_opts(transport, buffer_size):
     sock = transport.get_extra_info('socket')
@@ -155,15 +154,12 @@ class RawWebSocket:
         self.writer.write(frame)
         await self.writer.drain()
 
-
     async def send_batch(self, parts: List[bytes]):
-        if self._closed:        
+        if self._closed:
             raise ConnectionError("WebSocket closed")
-        frames = []
         for part in parts:
-            frames.append(self._build_frame(self.OP_BINARY, part, mask=True))
-    
-        self.writer.write(b''.join(frames))
+            self.writer.write(
+                self._build_frame(self.OP_BINARY, part, mask=True))
         await self.writer.drain()
 
     async def recv(self) -> Optional[bytes]:

@@ -17,11 +17,12 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "verbose": False,
     "check_updates": True,
     "log_max_mb": 5,
-    "buf_kb": 512,
-    "pool_size": 4,
+    "buf_kb": 4096,
+    "pool_size": 2,
     "cfproxy": True,
     "cfproxy_user_domain": [],
-    "cfproxy_worker_domain": []
+    "cfproxy_worker_domain": [],
+    "force_test_dc": False,
 }
 
 
