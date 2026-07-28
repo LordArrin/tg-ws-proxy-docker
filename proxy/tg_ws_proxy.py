@@ -344,7 +344,11 @@ async def _handle_client(reader, writer, secret: bytes):
         ws_timed_out = False
         all_redirects = True
 
-        ws = await ws_pool.get(dc, is_media, target, domains) if not is_test_dc else None
+        allow_pool_refill = now >= ip_fail_until.get(target, 0)
+        ws = await ws_pool.get(
+            dc, is_media, target, domains,
+            allow_refill=allow_pool_refill,
+        ) if not is_test_dc else None
         if ws:
             log.info("[%s] DC%d%s -> pool hit via %s",
                      label, dc, media_tag, target)
@@ -418,6 +422,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         dc_fail_until.pop(dc_key, None)
         ip_fail_until.pop(target, None)
+        ws_pool.report_success(dc, is_media)
         stats.connections_ws += 1
 
         splitter = None

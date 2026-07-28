@@ -16,15 +16,20 @@ log = logging.getLogger('tg-mtproto-proxy')
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
     WS_POOL_CHECK_INTERVAL = 5.0
+    REFILL_BACKOFF_INITIAL = 60.0
+    REFILL_BACKOFF_MAX = 3600.0
     
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
         self._rotating: Dict[Tuple[int, bool], asyncio.Task] = {}
+        self._refill_failures: Dict[Tuple[int, bool], int] = {}
+        self._refill_after: Dict[Tuple[int, bool], float] = {}
         self.try_fronting_first = False
 
     async def get(self, dc: int, is_media: bool,
-                  target_ip: str, domains: List[str]
+                  target_ip: str, domains: List[str],
+                  *, allow_refill: bool = True
                   ) -> Optional[RawWebSocket]:
         key = (dc, is_media)
         now = time.monotonic()
@@ -43,18 +48,27 @@ class _WsPool:
             stats.pool_hits += 1
             log.debug("WS pool hit DC%d%s (age=%.1fs, left=%d)",
                       dc, 'm' if is_media else '', age, len(bucket))
-            self._schedule_refill(key, target_ip, domains)
+            self.report_success(dc, is_media)
+            if allow_refill:
+                self._schedule_refill(key, target_ip, domains)
             return ws
 
         stats.pool_misses += 1
-        self._schedule_refill(key, target_ip, domains)
+        if allow_refill:
+            self._schedule_refill(key, target_ip, domains)
         return None
 
     def _schedule_refill(self, key, target_ip, domains):
-        if key in self._refilling:
+        if (key in self._refilling
+                or time.monotonic() < self._refill_after.get(key, 0)):
             return
         self._refilling.add(key)
         asyncio.create_task(self._refill(key, target_ip, domains))
+
+    def report_success(self, dc: int, is_media: bool) -> None:
+        key = (dc, is_media)
+        self._refill_failures.pop(key, None)
+        self._refill_after.pop(key, None)
 
     async def _refill(self, key, target_ip, domains):
         dc, is_media = key
@@ -63,6 +77,7 @@ class _WsPool:
             needed = proxy_config.pool_size - len(bucket)
             if needed <= 0:
                 return
+            connected = 0
             tasks = [asyncio.create_task(
                 self._connect_one(target_ip, domains))
                 for _ in range(needed)]
@@ -71,9 +86,24 @@ class _WsPool:
                     ws = await t
                     if ws:
                         bucket.append((ws, time.monotonic()))
+                        connected += 1
                         self._schedule_rotation(key, target_ip, domains)
                 except Exception:
                     pass
+            if connected:
+                self.report_success(dc, is_media)
+            else:
+                failures = self._refill_failures.get(key, 0) + 1
+                self._refill_failures[key] = failures
+                delay = min(
+                    self.REFILL_BACKOFF_INITIAL
+                    * (2 ** min(failures - 1, 6)),
+                    self.REFILL_BACKOFF_MAX,
+                )
+                self._refill_after[key] = time.monotonic() + delay
+                log.info(
+                    "WS pool refill failed for DC%d%s, retry in %.0fs",
+                    dc, 'm' if is_media else '', delay)
             log.debug("WS pool refilled DC%d%s: %d ready",
                       dc, 'm' if is_media else '', len(bucket))
         finally:
@@ -136,6 +166,8 @@ class _WsPool:
                 self.try_fronting_first = False
                 return ws
             except asyncio.TimeoutError:
+                if self.try_fronting_first:
+                    return None
                 return await self._connect_fronted(target_ip, domain)
             except WsHandshakeError as exc:
                 if exc.is_redirect:
@@ -179,6 +211,8 @@ class _WsPool:
         self._idle.clear()
         self._refilling.clear()
         self._rotating.clear()
+        self._refill_failures.clear()
+        self._refill_after.clear()
         self.try_fronting_first = False
 
 
