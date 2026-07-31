@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 
 from collections import deque
@@ -218,75 +219,108 @@ class _WsPool:
 
 class _CfWorkerPool:
     WS_POOL_MAX_AGE = 100.0
+    PER_DC_LIMIT = 1
 
     def __init__(self):
-        self._idle: Dict[Tuple[int, str], deque] = {}
-        self._refilling: Set[Tuple[int, str]] = set()
+        self._idle: Dict[int, deque] = {}
+        self._refilling: Set[int] = set()
+        self._exhausted_until: Dict[str, float] = {}
 
-    async def get(self, dc: int, worker_domain: str, fallback_dst: str) -> Optional[RawWebSocket]:
+    async def get(self, dc: int, fallback_dst: str,
+                  worker_domains: List[str]
+                  ) -> Optional[Tuple[RawWebSocket, str]]:
         now = time.monotonic()
-        key = (dc, worker_domain)
 
-        bucket = self._idle.get(key)
+        bucket = self._idle.get(dc)
         if bucket is None:
             bucket = deque()
-            self._idle[key] = bucket
+            self._idle[dc] = bucket
         while bucket:
-            ws, created = bucket.popleft()
+            ws, created, worker_domain = bucket.popleft()
             age = now - created
             if (age > self.WS_POOL_MAX_AGE or ws._closed
                     or ws.writer.transport.is_closing()):
                 asyncio.create_task(self._quiet_close(ws))
                 continue
             stats.cf_pool_hits += 1
-            log.debug("CF worker pool hit DC%d (age=%.1fs, left=%d)",
-                      dc, age, len(bucket))
-            self._schedule_refill(key, fallback_dst)
-            return ws
+            log.debug(
+                "CF worker pool hit DC%d via %s (age=%.1fs, left=%d)",
+                dc, worker_domain, age, len(bucket))
+            self._schedule_refill(dc, fallback_dst, worker_domains)
+            return ws, worker_domain
 
         stats.cf_pool_misses += 1
-        self._schedule_refill(key, fallback_dst)
         return None
 
-    def _schedule_refill(self, key, fallback_dst):
-        if key in self._refilling:
+    def _schedule_refill(self, dc, fallback_dst, worker_domains):
+        if dc in self._refilling:
             return
-        self._refilling.add(key)
-        asyncio.create_task(self._refill(key, fallback_dst))
+        self._refilling.add(dc)
+        asyncio.create_task(self._refill(
+            dc, fallback_dst, list(worker_domains)))
 
-    async def _refill(self, key, fallback_dst):
-        dc, worker_domain = key
+    async def _refill(self, dc, fallback_dst, worker_domains):
         try:
-            bucket = self._idle.setdefault(key, deque())
-            needed = proxy_config.pool_size - len(bucket)
+            bucket = self._idle.setdefault(dc, deque())
+            target_size = min(proxy_config.pool_size, self.PER_DC_LIMIT)
+            needed = target_size - len(bucket)
             if needed <= 0:
                 return
-            tasks = [asyncio.create_task(
-                self._connect_one(worker_domain, fallback_dst, dc))
-                for _ in range(needed)]
-            for t in tasks:
-                try:
-                    ws = await t
-                    if ws:
-                        bucket.append((ws, time.monotonic()))
-                except Exception:
-                    pass
+
+            for _ in range(needed):
+                connected = await self._connect_one(
+                    worker_domains, fallback_dst, dc)
+                if connected is None:
+                    break
+                ws, worker_domain = connected
+                bucket.append((ws, time.monotonic(), worker_domain))
             log.debug("CF worker pool refilled DC%d: %d ready",
                       dc, len(bucket))
         finally:
-            self._refilling.discard(key)
+            self._refilling.discard(dc)
 
-    async def _connect_one(self, worker_domain, fallback_dst, dc) -> Optional[RawWebSocket]:
+    async def _connect_one(self, worker_domains, fallback_dst, dc):
         query = urlencode({
             'dst': fallback_dst,
             'dc': str(dc),
         })
         path = f'/apiws?{query}'
-        try:
-            return await RawWebSocket.connect(
-                worker_domain, worker_domain, timeout=8, path=path)
-        except Exception:
-            return None
+        for worker_domain in self.available_domains(worker_domains):
+            try:
+                ws = await RawWebSocket.connect(
+                    worker_domain, worker_domain, timeout=8, path=path)
+                return ws, worker_domain
+            except Exception as exc:
+                self.report_failure(worker_domain, exc)
+        return None
+
+    def available_domains(self, worker_domains: List[str]) -> List[str]:
+        now = time.time()
+        domains = list()
+        for domain in worker_domains:
+            if domain in domains:
+                continue
+            exhausted_until = self._exhausted_until.get(domain, 0)
+            if exhausted_until > now:
+                continue
+            if exhausted_until:
+                self._exhausted_until.pop(domain, None)
+            domains.append(domain)
+        random.shuffle(domains)
+        return domains
+
+    def report_failure(self, worker_domain: str, exc: Exception) -> None:
+        return  # TODO: check status code after daily limit reached
+        if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
+            return
+
+        now = time.time()
+        if self._exhausted_until.get(worker_domain, 0) > now:
+            return
+        exhausted_until = now + (86400 - (now % 86400))
+        self._exhausted_until[worker_domain] = exhausted_until
+        log.warning(
+            "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
 
     async def _quiet_close(self, ws):
         try:
@@ -303,15 +337,16 @@ class _CfWorkerPool:
         if not cf_fallbacks or not proxy_config.cfproxy_worker_domains:
             return
 
-        for worker_domain in proxy_config.cfproxy_worker_domains:
-            for dc, fallback_dst in cf_fallbacks.items():
-                self._schedule_refill((dc, worker_domain), fallback_dst)
+        worker_domains = list(proxy_config.cfproxy_worker_domains)
+        for dc, fallback_dst in cf_fallbacks.items():
+            self._schedule_refill(dc, fallback_dst, worker_domains)
 
         log.info("CF worker pool warmup started for %d DC(s)", len(cf_fallbacks))
 
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
+        self._exhausted_until.clear()
 
 
 ws_pool = _WsPool()
