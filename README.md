@@ -16,9 +16,9 @@
 | `CFPROXY_DOMAIN` | | Указать свой [домен](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) для проксирования через Cloudflare. |
 | `CFPROXY_WORKER_DOMAIN` | | Указать свой [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) для проксирования. Можно указать несколько доменов, разделив их пробелом (например: `worker1.dev worker2.dev`). |
 | `KEEPALIVE` | `false` | Включить WS keepalive пинги для предотвращения закрытия соединений при простое. Экспериментальная опция, отключена по умолчанию. Для работы требуется настроить [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
-| `SOCKS_ENABLED` | `false` | Включить встроенный SOCKS5 прокси с туннелированием трафика через Cloudflare Worker. |
+| `SOCKS_ENABLED` | `false` | Включить встроенный SOCKS5 прокси с туннелированием трафика через [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
 | `SOCKS_PORT` | `1080` | Порт для прослушивания SOCKS5 прокси. |
 | `SOCKS_HOST` | `0.0.0.0` | Хост для прослушивания SOCKS5 прокси. |
 | `SOCKS_USER` | | *(Опционально)* Имя пользователя для аутентификации SOCKS5. Если указано вместе с `SOCKS_PASS`, аутентификация становится строго обязательной. |
 | `SOCKS_PASS` | | *(Опционально)* Пароль для аутентификации SOCKS5. |
-| `SOCKS_CONNECT_TIMEOUT` | `10` | Таймаут установки WebSocket-соединения с Cloudflare Worker (в секундах). |
+| `SOCKS_CONNECT_TIMEOUT` | `10` | Таймаут установки WebSocket-соединения с [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) (в секундах). |
