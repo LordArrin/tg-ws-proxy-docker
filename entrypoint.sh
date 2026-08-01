@@ -28,6 +28,11 @@ else
     fi
 fi
 
+if [[ "${SOCKS_ENABLED:-false}" == "true" && -n "${CFPROXY_WORKER_DOMAIN:-}" ]]; then
+    echo "[Entrypoint] Starting SOCKS5 proxy on port ${SOCKS_PORT:-1080}..."
+    /opt/venv/bin/python -u proxy/socks.py &
+fi
+
 if [[ "${KEEPALIVE:-false}" == "true" && -n "${CFPROXY_WORKER_DOMAIN:-}" ]]; then
     echo "[Entrypoint] Starting background keepalive agent..."
     /opt/venv/bin/python -u proxy/keepalive.py &
