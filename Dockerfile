@@ -1,6 +1,13 @@
-# syntax=docker/dockerfile:1
+FROM python:3.15-rc-alpine3.24 AS builder
 
-FROM python:3.15-rc AS builder
+RUN apk add --no-cache \
+    build-base \
+    linux-headers \
+    libffi-dev \
+    openssl-dev \
+    cargo \
+    rust \
+    libuv-dev
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,15 +21,16 @@ RUN python -m venv "$VIRTUAL_ENV" \
 WORKDIR /app
 
 COPY requirements.txt .
+
 RUN "$VIRTUAL_ENV/bin/pip" install --no-cache-dir -r requirements.txt \
     && find "$VIRTUAL_ENV" -name "*.pyc" -delete \
     && find "$VIRTUAL_ENV" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-FROM python:3.15-rc-slim AS runtime
+FROM python:3.15-rc-alpine3.24 AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.9.2" \
+      org.opencontainers.image.version="1.9.5" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -38,11 +46,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CFPROXY_DOMAIN= \
     CFPROXY_WORKER_DOMAIN=
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 1001 app \
-    && useradd --system --uid 1001 --gid app --create-home --home-dir /home/app app \
+RUN apk add --no-cache tini ca-certificates \
+    && addgroup -S -g 1001 app \
+    && adduser -S -u 1001 -G app -h /home/app -s /sbin/nologin app \
     && mkdir -p /home/app/.local /tmp/tg-proxy \
     && chown -R app:app /home/app /tmp/tg-proxy
 
@@ -53,12 +59,12 @@ COPY --chown=app:app proxy ./proxy
 COPY --chown=app:app utils ./utils
 COPY --chown=app:app LICENSE ./
 COPY entrypoint.sh /entrypoint.sh
+
 RUN chmod +x /entrypoint.sh \
-    && find /app -name "*.pyc" -delete \
-    && find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+    && find /app \( -name "*.pyc" -delete \) -o \( -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null \; \) || true
 
 USER app
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--", "/bin/sh", "/entrypoint.sh"]
 
 CMD []

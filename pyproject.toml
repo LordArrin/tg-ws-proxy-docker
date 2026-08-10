@@ -3,17 +3,18 @@ requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tg-ws-proxy"
+name = "tg-ws-proxy-docker"
 dynamic=["version"]
 
-description = "Telegram Desktop WebSocket Bridge Proxy"
+description = "Telegram WebSocket Proxy with MTProto and SOCKS5 support"
 readme = "docs/README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.13"
 
 license = { name = "MIT", file = "LICENSE" }
 
 authors = [
-    { name = "Flowseal" }
+    { name = "Flowseal"},
+    { name = "LordArrin"},
 ]
 
 keywords = [
@@ -35,17 +36,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "uvloop>=0.22.1",
-    "websockets>=16.1.1",
+    "websockets>=17.0.1",
 ]
 
 [project.scripts]
 tg-ws-proxy = "proxy.tg_ws_proxy:main"
 
 [project.urls]
-Source = "https://github.com/Flowseal/tg-ws-proxy"
-Issues = "https://github.com/Flowseal/tg-ws-proxy/issues"
+Source = "https://github.com/LordArrin/tg-ws-proxy-docker"
+Issues = "https://github.com/LordArrin/tg-ws-proxy-docker/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["proxy", "utils"]
