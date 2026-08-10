@@ -22,7 +22,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN "$VIRTUAL_ENV/bin/pip" install --no-cache-dir -r requirements.txt \
+RUN "$VIRTUAL_ENV/bin/pip" install --upgrade --no-cache-dir -r requirements.txt \
     && find "$VIRTUAL_ENV" -name "*.pyc" -delete \
     && find "$VIRTUAL_ENV" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
@@ -30,7 +30,7 @@ FROM python:3.15-rc-alpine3.24 AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.9.6" \
+      org.opencontainers.image.version="1.9.7" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -50,7 +50,9 @@ RUN apk add --no-cache tini ca-certificates \
     && addgroup -S -g 1001 app \
     && adduser -S -u 1001 -G app -h /home/app -s /sbin/nologin app \
     && mkdir -p /home/app/.local /tmp/tg-proxy \
-    && chown -R app:app /home/app /tmp/tg-proxy
+    && chown -R app:app /home/app /tmp/tg-proxy \
+    && rm -rf /usr/local/lib/python3.15/site-packages \
+    && rm -rf /root/.cache
 
 WORKDIR /app
 
