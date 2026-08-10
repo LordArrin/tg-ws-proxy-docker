@@ -7,7 +7,6 @@ name = "tg-ws-proxy-docker"
 dynamic=["version"]
 
 description = "Telegram WebSocket Proxy with MTProto and SOCKS5 support"
-readme = "docs/README.md"
 requires-python = ">=3.13"
 
 license = { name = "MIT", file = "LICENSE" }
@@ -39,6 +38,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "uvloop>=0.22.1",
     "websockets>=17.0.1",
+    "certifi>=2026.7.22",
 ]
 
 [project.scripts]
