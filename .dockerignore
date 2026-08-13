@@ -13,16 +13,9 @@ venv/
 dist/
 build/
 packaging/
-windows.py
-icon.ico
 *.spec
 *.spec.bak
 *.manifest
 *.log
-.vscode/
-.idea/
 *.swp
 *.swo
-.DS_Store
-Thumbs.db
-Desktop.ini

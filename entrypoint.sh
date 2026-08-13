@@ -33,8 +33,9 @@ if [ "${SOCKS_ENABLED:-false}" = "true" ] && [ -n "${CFPROXY_WORKER_DOMAIN:-}" ]
 fi
 
 if [ "${KEEPALIVE:-false}" = "true" ] && [ -n "${CFPROXY_WORKER_DOMAIN:-}" ]; then
-    echo "[Entrypoint] Starting background keepalive agent..."
+    echo "[Entrypoint] Starting keepalive agent..."
     /opt/venv/bin/python -u proxy/keepalive.py &
 fi
 
+echo "[Entrypoint] Starting MTProto proxy..."
 exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py "$@"
