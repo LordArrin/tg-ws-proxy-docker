@@ -8,8 +8,9 @@ import logging
 import socket as _socket
 import random
 import time
-from typing import Optional, Set, List
+from typing import Optional, Set, List, Dict, Tuple, Deque
 from urllib.parse import urlencode
+from collections import deque
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
     _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,8 +32,11 @@ SOCKS_PORT = int(os.environ.get('SOCKS_PORT', '1080'))
 CONNECT_TIMEOUT = 15.0
 DNS_TIMEOUT = 8.0
 WS_MAX_FRAME_SIZE = 64 * 1024
-WS_IDLE_TIMEOUT = 60.0
-MAX_RETRIES = 3
+WS_IDLE_TIMEOUT = 180.0
+MAX_RETRIES = 5
+POOL_MAX_AGE = 90.0
+POOL_MAX_TOTAL = 8
+POOL_SIZE_PER_TARGET = 2
 
 
 def _parse_domains(value: str) -> List[str]:
@@ -63,6 +67,142 @@ _AUTH_VER, _AUTH_SUCCESS, _AUTH_FAILURE = 0x01, 0x00, 0xFF
 _active_connections: Set[asyncio.Task] = set()
 _connection_count = 0
 _shutdown_event: Optional[asyncio.Event] = None
+
+
+class WsConnectionPool:
+    def __init__(self):
+        self._idle: Dict[Tuple[str, int], Deque[Tuple[RawWebSocket, float]]] = {}
+        self._lock = asyncio.Lock()
+
+    def _total_connections(self) -> int:
+        return sum(len(bucket) for bucket in self._idle.values())
+
+    async def acquire(self, target_ip: str, target_port: int, domains: List[str]) -> Optional[RawWebSocket]:
+        key = (target_ip, target_port)
+        async with self._lock:
+            bucket = self._idle.get(key)
+            if bucket:
+                while bucket:
+                    ws, created = bucket.popleft()
+                    if time.monotonic() - created > POOL_MAX_AGE:
+                        asyncio.create_task(self._quiet_close(ws))
+                        continue
+                    if ws._closed:
+                        continue
+                    if ws.writer.transport.is_closing():
+                        asyncio.create_task(self._quiet_close(ws))
+                        continue
+                    try:
+                        data = await asyncio.wait_for(ws.recv(), timeout=0.1)
+                        if data is None:
+                            continue
+                        asyncio.create_task(self._quiet_close(ws))
+                        continue
+                    except asyncio.TimeoutError:
+                        log.debug("Pool hit for %s:%d", target_ip, target_port)
+                        return ws
+                    except Exception:
+                        continue
+
+        return await self._create_new(target_ip, target_port, domains)
+
+    async def _create_new(self, target_ip: str, target_port: int, domains: List[str]) -> Optional[RawWebSocket]:
+        global _connection_count
+        for attempt in range(MAX_RETRIES):
+            doms = list(domains)
+            random.shuffle(doms)
+            for domain in doms:
+                if _shutdown_event and _shutdown_event.is_set():
+                    return None
+                path = f"/apiws?{urlencode({'dst': target_ip})}"
+                try:
+                    ws = await asyncio.wait_for(
+                        RawWebSocket.connect(domain, domain, timeout=CONNECT_TIMEOUT, path=path),
+                        timeout=CONNECT_TIMEOUT + 2.0
+                    )
+                    _connection_count += 1
+                    log.debug("Pool miss for %s:%d, created via %s (#%d)",
+                              target_ip, target_port, domain, _connection_count)
+                    return ws
+                except asyncio.TimeoutError:
+                    log.debug("WS timeout via %s (%d/%d)", domain, attempt + 1, MAX_RETRIES)
+                except Exception as exc:
+                    log.debug("WS fail via %s: %s (%d/%d)", domain, repr(exc), attempt + 1, MAX_RETRIES)
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(min(2.0 ** attempt, 10.0))
+        return None
+
+    def release(self, ws: Optional[RawWebSocket], target_ip: str, target_port: int) -> None:
+        if ws is None or ws._closed:
+            return
+        try:
+            if ws.writer.transport.is_closing():
+                return
+        except Exception:
+            return
+        
+        key = (target_ip, target_port)
+        bucket = self._idle.setdefault(key, deque())
+        
+        if len(bucket) >= POOL_SIZE_PER_TARGET or self._total_connections() >= POOL_MAX_TOTAL:
+            asyncio.create_task(self._quiet_close(ws))
+            return
+        
+        bucket.append((ws, time.monotonic()))
+        log.debug("Released WS to pool for %s:%d (pool: %d/%d)",
+                  target_ip, target_port, self._total_connections(), POOL_MAX_TOTAL)
+
+    async def cleanup(self):
+        async with self._lock:
+            now = time.monotonic()
+            to_close = []
+            
+            for key in list(self._idle.keys()):
+                bucket = self._idle[key]
+                new_bucket: Deque[Tuple[RawWebSocket, float]] = deque()
+                while bucket:
+                    ws, created = bucket.popleft()
+                    age = now - created
+                    if age > POOL_MAX_AGE or ws._closed:
+                        to_close.append(ws)
+                    else:
+                        new_bucket.append((ws, created))
+                
+                if new_bucket:
+                    self._idle[key] = new_bucket
+                else:
+                    del self._idle[key]
+            
+            if self._total_connections() > POOL_MAX_TOTAL:
+                all_conns = []
+                for bucket in self._idle.values():
+                    all_conns.extend(bucket)
+                all_conns.sort(key=lambda x: x[1])
+                
+                excess = self._total_connections() - POOL_MAX_TOTAL
+                for i in range(min(excess, len(all_conns))):
+                    ws, created = all_conns[i]
+                    to_close.append(ws)
+                    
+                    for key, bucket in self._idle.items():
+                        new_bucket = deque([(w, c) for w, c in bucket if w != ws])
+                        if new_bucket:
+                            self._idle[key] = new_bucket
+                        else:
+                            del self._idle[key]
+            
+            for ws in to_close:
+                asyncio.create_task(self._quiet_close(ws))
+
+    @staticmethod
+    async def _quiet_close(ws: RawWebSocket):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+_ws_pool = WsConnectionPool()
 
 
 async def _resolve(host: str) -> Optional[str]:
@@ -108,99 +248,92 @@ def _reply(rep: int, bind_addr: str = '0.0.0.0', bind_port: int = 0) -> bytes:
 
 async def _tcp_to_ws(reader: asyncio.StreamReader, ws: RawWebSocket, label: str, stop_event: asyncio.Event) -> None:
     bytes_sent = 0
+    chunks_sent = 0
+    close_reason = "normal"
     try:
         while not stop_event.is_set():
             try:
                 data = await asyncio.wait_for(reader.read(WS_MAX_FRAME_SIZE), timeout=WS_IDLE_TIMEOUT)
                 if not data:
-                    log.debug("[%s] TCP EOF (sent %d bytes)", label, bytes_sent)
+                    close_reason = "tcp_eof"
                     break
                 offset = 0
                 while offset < len(data):
                     if stop_event.is_set():
+                        close_reason = "stopped"
                         break
                     chunk = data[offset:offset + WS_MAX_FRAME_SIZE]
                     await ws.send(chunk)
                     bytes_sent += len(chunk)
+                    chunks_sent += 1
                     offset += len(chunk)
-                    if offset < len(data):
-                        await asyncio.sleep(0)
             except asyncio.TimeoutError:
+                close_reason = f"tcp_read_timeout({WS_IDLE_TIMEOUT}s)"
                 break
-            except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError, OSError):
+            except asyncio.IncompleteReadError:
+                close_reason = "tcp_incomplete"
+                break
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                close_reason = f"tcp_error({type(exc).__name__})"
                 break
     except asyncio.CancelledError:
-        pass
+        close_reason = "cancelled"
     except Exception as exc:
         log.error("[%s] tcp->ws: %s", label, exc, exc_info=True)
+        close_reason = f"unexpected({type(exc).__name__})"
     finally:
+        log.debug("[%s] tcp->ws ended: %s (sent %d bytes, %d chunks)", label, close_reason, bytes_sent, chunks_sent)
         stop_event.set()
 
 
 async def _ws_to_tcp(ws: RawWebSocket, writer: asyncio.StreamWriter, label: str, stop_event: asyncio.Event) -> None:
     bytes_recv = 0
+    chunks_recv = 0
     last_activity = time.monotonic()
+    close_reason = "normal"
     try:
         while not stop_event.is_set():
             try:
                 data = await asyncio.wait_for(ws.recv(), timeout=WS_IDLE_TIMEOUT)
                 if data is None:
+                    close_reason = "ws_closed"
                     break
                 writer.write(data)
-                await writer.drain()
+                try:
+                    await asyncio.wait_for(writer.drain(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    close_reason = "tcp_write_timeout(drain)"
+                    break
                 bytes_recv += len(data)
+                chunks_recv += 1
                 last_activity = time.monotonic()
             except asyncio.TimeoutError:
-                if time.monotonic() - last_activity > WS_IDLE_TIMEOUT * 3:
+                if time.monotonic() - last_activity > WS_IDLE_TIMEOUT * 2:
+                    close_reason = f"ws_idle_timeout({WS_IDLE_TIMEOUT}s)"
                     break
                 continue
-            except (ConnectionResetError, BrokenPipeError, OSError):
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                close_reason = f"ws_error({type(exc).__name__})"
                 break
     except asyncio.CancelledError:
-        pass
+        close_reason = "cancelled"
     except Exception as exc:
         log.error("[%s] ws->tcp: %s", label, exc, exc_info=True)
+        close_reason = f"unexpected({type(exc).__name__})"
     finally:
+        log.debug("[%s] ws->tcp ended: %s (recv %d bytes, %d chunks)", label, close_reason, bytes_recv, chunks_recv)
         stop_event.set()
-
-
-async def _ws_connect(target_ip: str, label: str) -> Optional[RawWebSocket]:
-    global _connection_count
-    if not WORKER_DOMAINS:
-        return None
-
-    for attempt in range(MAX_RETRIES):
-        domains = list(WORKER_DOMAINS)
-        random.shuffle(domains)
-        for domain in domains:
-            if _shutdown_event and _shutdown_event.is_set():
-                return None
-            path = f"/apiws?{urlencode({'dst': target_ip})}"
-            try:
-                ws = await asyncio.wait_for(
-                    RawWebSocket.connect(domain, domain, timeout=CONNECT_TIMEOUT, path=path),
-                    timeout=CONNECT_TIMEOUT + 2.0
-                )
-                _connection_count += 1
-                log.info("[%s] WS via %s -> %s:443 (#%d)", label, domain, target_ip, _connection_count)
-                return ws
-            except asyncio.TimeoutError:
-                log.warning("[%s] WS timeout via %s (%d/%d)", label, domain, attempt + 1, MAX_RETRIES)
-            except Exception as exc:
-                log.warning("[%s] WS fail via %s: %s (%d/%d)", label, domain, repr(exc), attempt + 1, MAX_RETRIES)
-        if attempt < MAX_RETRIES - 1:
-            await asyncio.sleep(min(2.0 ** attempt, 10.0))
-
-    log.error("[%s] All %d WS attempts failed", label, MAX_RETRIES)
-    return None
 
 
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     peer = writer.get_extra_info('peername')
     label = f"{peer[0]}:{peer[1]}" if peer else '?'
     ws: Optional[RawWebSocket] = None
+    target_ip = ''
+    target_port = 0
     stop_event = asyncio.Event()
     tasks: Set[asyncio.Task] = set()
+    should_release_to_pool = False
 
     try:
         hdr = await asyncio.wait_for(reader.readexactly(2), timeout=10)
@@ -273,10 +406,11 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
             log.warning("[%s] Cannot resolve %s", label, target_host)
             return
 
-        ws = await _ws_connect(target_ip, label)
+        ws = await _ws_pool.acquire(target_ip, target_port, WORKER_DOMAINS)
         if ws is None:
             writer.write(_reply(_REP_HOST_UNREACH))
             await writer.drain()
+            log.warning("[%s] Cannot connect to %s:443 via WS", label, target_ip)
             return
 
         writer.write(_reply(_REP_OK))
@@ -299,6 +433,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
             _active_connections.difference_update(tasks)
 
         log.info("[%s] Closed (%s:%d)", label, target_host, target_port)
+        should_release_to_pool = True
 
     except (asyncio.IncompleteReadError, asyncio.TimeoutError):
         log.debug("[%s] Handshake error/disconnect", label)
@@ -307,10 +442,13 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
     finally:
         stop_event.set()
         if ws:
-            try:
-                await asyncio.wait_for(ws.close(), timeout=5.0)
-            except Exception:
-                pass
+            if should_release_to_pool:
+                _ws_pool.release(ws, target_ip, target_port)
+            else:
+                try:
+                    await asyncio.wait_for(ws.close(), timeout=5.0)
+                except Exception:
+                    pass
         try:
             writer.close()
             if sys.version_info >= (3, 12):
@@ -322,6 +460,17 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
                 await writer.wait_closed()
         except Exception:
             pass
+
+
+async def _pool_cleanup_loop():
+    while True:
+        try:
+            await asyncio.sleep(30.0)
+            await _ws_pool.cleanup()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            log.error("Pool cleanup error: %s", exc, exc_info=True)
 
 
 async def _run() -> None:
@@ -346,12 +495,16 @@ async def _run() -> None:
         except (OSError, AttributeError):
             pass
 
+    cleanup_task = asyncio.create_task(_pool_cleanup_loop())
+
     log.info("=" * 54)
     log.info(" SOCKS5 Proxy (WS via CF Worker)")
     log.info(" Listen  : %s:%d", SOCKS_HOST, SOCKS_PORT)
     log.info(" Auth    : %s", "ENABLED" if REQUIRE_AUTH else "DISABLED")
     log.info(" Workers : %s", ", ".join(WORKER_DOMAINS))
     log.info(" Note    : Only port 443 supported (Worker limitation)")
+    log.info(" Pool    : max_age=%.0fs, max_total=%d, per_target=%d",
+             POOL_MAX_AGE, POOL_MAX_TOTAL, POOL_SIZE_PER_TARGET)
     log.info("=" * 54)
 
     try:
@@ -361,6 +514,11 @@ async def _run() -> None:
         pass
     finally:
         _shutdown_event.set()
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except Exception:
+            pass
         if _active_connections:
             for task in list(_active_connections):
                 task.cancel()
