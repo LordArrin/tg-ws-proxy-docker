@@ -47,22 +47,25 @@ class MsgSplitter:
         self._plain_buf = bytearray()
         self._disabled = False
 
-    def split(self, chunk: bytes) -> List[bytes]:
+    def split(self, chunk: bytes, cipher_chunk: Optional[bytes] = None) -> List[bytes]:
         if not chunk:
             return []
         if self._disabled:
-            return [chunk]
+            return [cipher_chunk if cipher_chunk is not None else chunk]
 
-        self._cipher_buf.extend(chunk)
-        self._plain_buf.extend(self._dec.update(chunk))
+        if cipher_chunk is not None:
+            self._plain_buf.extend(chunk)
+            self._cipher_buf.extend(cipher_chunk)
+        else:
+            self._cipher_buf.extend(chunk)
+            if self._dec is not None:
+                self._plain_buf.extend(self._dec.update(chunk))
+            else:
+                self._plain_buf.extend(chunk)
 
         parts = []
         offset = 0
         buf_len = len(self._cipher_buf)
-        # Walk the buffer with an offset instead of deleting each packet from
-        # the front. Front-deletion on a bytearray shifts the remaining bytes,
-        # so a chunk holding many small packets degrades to O(N^2); a single
-        # trailing del keeps splitting O(N).
         while offset < buf_len:
             packet_len = self._next_packet_len(offset, buf_len - offset)
             if packet_len is None:
@@ -103,8 +106,9 @@ class MsgSplitter:
         if first in (0x7F, 0xFF):
             if avail < 4:
                 return None
-            payload_len = int.from_bytes(
-                self._plain_buf[offset + 1:offset + 4], 'little') * 4
+            payload_len = (self._plain_buf[offset + 1] |
+                           (self._plain_buf[offset + 2] << 8) |
+                           (self._plain_buf[offset + 3] << 16)) * 4
             header_len = 4
         else:
             payload_len = (first & 0x7F) * 4
@@ -119,7 +123,10 @@ class MsgSplitter:
     def _next_intermediate_len(self, offset: int, avail: int) -> Optional[int]:
         if avail < 4:
             return None
-        payload_len = _st_I_le.unpack_from(self._plain_buf, offset)[0] & 0x7FFFFFFF
+        payload_len = (self._plain_buf[offset] |
+                       (self._plain_buf[offset + 1] << 8) |
+                       (self._plain_buf[offset + 2] << 16) |
+                       ((self._plain_buf[offset + 3] & 0x7F) << 24))
         if payload_len <= 0:
             return 0
         packet_len = 4 + payload_len
@@ -257,8 +264,16 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
 
 async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: CryptoCtx):
     try:
-        rr, rw = await asyncio.wait_for(
-            asyncio.open_connection(dst, port), timeout=10)
+        if getattr(proxy_config, 'upstream_proxy', ''):
+            from .upstream import open_upstream_connection
+            rr, rw = await open_upstream_connection(
+                dst, port, proxy_config.upstream_proxy, timeout=10.0
+            )
+        else:
+            is_ipv6 = ":" in dst
+            family = _socket.AF_INET6 if is_ipv6 else _socket.AF_INET
+            rr, rw = await asyncio.wait_for(
+                asyncio.open_connection(dst, port, family=family), timeout=10)
     except Exception as exc:
         log.warning("[%s] TCP fallback to %s:%d failed: %s",
                     label, dst, port, repr(exc))
@@ -305,9 +320,9 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                 up_bytes += n
                 up_packets += 1
                 plain = ctx.clt_dec.update(chunk)
-                chunk = ctx.tg_enc.update(plain)
+                cipher_chunk = ctx.tg_enc.update(plain)
                 if splitter:
-                    parts = splitter.split(chunk)
+                    parts = splitter.split(plain, cipher_chunk)
                     if not parts:
                         continue
                     if len(parts) > 1:
@@ -315,7 +330,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                     else:
                         await ws.send(parts[0])
                 else:
-                    await ws.send(chunk)
+                    await ws.send(cipher_chunk)
         except asyncio.CancelledError:
             return
         except (ConnectionError, OSError) as e:
