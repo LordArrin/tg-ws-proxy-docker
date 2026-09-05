@@ -32,7 +32,6 @@ MAX_FAILURES = 5
 COOLDOWN_BASE = 60.0
 COOLDOWN_MAX = 3600.0
 
-
 def _parse_domains(value: str) -> List[str]:
     items = value.replace(',', ' ').replace(';', ' ').split()
     seen = set()
@@ -44,12 +43,10 @@ def _parse_domains(value: str) -> List[str]:
             result.append(item)
     return result
 
-
 WORKER_DOMAINS = _parse_domains(os.environ.get('CFPROXY_WORKER_DOMAIN', ''))
 
 _domain_failures: Dict[str, int] = {}
 _domain_cooldown_until: Dict[str, float] = {}
-
 
 def _get_available_domains() -> List[str]:
     now = time.monotonic()
@@ -62,7 +59,6 @@ def _get_available_domains() -> List[str]:
                 _domain_cooldown_until.pop(domain, None)
     return available
 
-
 def _record_failure(domain: str) -> None:
     failures = _domain_failures.get(domain, 0) + 1
     _domain_failures[domain] = failures
@@ -71,11 +67,9 @@ def _record_failure(domain: str) -> None:
         _domain_cooldown_until[domain] = time.monotonic() + cooldown
         log.warning("Domain %s failed %d times, cooldown %.0fs", domain, failures, cooldown)
 
-
 def _record_success(domain: str) -> None:
     _domain_failures.pop(domain, None)
     _domain_cooldown_until.pop(domain, None)
-
 
 async def _ping_domain(domain: str) -> bool:
     path = "/apiws?dst=127.0.0.1"
@@ -100,7 +94,6 @@ async def _ping_domain(domain: str) -> bool:
     except Exception:
         return False
 
-
 async def _keepalive_loop() -> None:
     log.info("Agent started")
     log.info("Domains: %s", ", ".join(WORKER_DOMAINS))
@@ -123,7 +116,6 @@ async def _keepalive_loop() -> None:
 
         await asyncio.sleep(random.uniform(PING_INTERVAL_MIN, PING_INTERVAL_MAX))
 
-
 async def _stats_reporter() -> None:
     while True:
         await asyncio.sleep(60.0)
@@ -138,7 +130,6 @@ async def _stats_reporter() -> None:
                 parts.append(f"{domain}:{cooldown_until - now:.0f}s")
         if parts:
             log.info("Stats: %s", ", ".join(parts))
-
 
 async def _main() -> None:
     if not WORKER_DOMAINS:
@@ -156,8 +147,13 @@ async def _main() -> None:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-
 def main() -> None:
+    try:
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
+
     def signal_handler(signum, frame):
         log.info("Received signal %d", signum)
         sys.exit(0)
@@ -172,7 +168,6 @@ def main() -> None:
     except Exception as exc:
         log.critical("Agent crashed: %s", exc, exc_info=True)
         sys.exit(1)
-
 
 if __name__ == '__main__':
     main()
