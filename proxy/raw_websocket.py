@@ -44,28 +44,9 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
     if not data:
         return data
     n = len(data)
-    if n < 64:
-        mask_rep = (mask * (n // 4 + 1))[:n]
-        return (int.from_bytes(data, 'big') ^
-                int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
-
-    mask_64 = int.from_bytes(mask * 2, 'big')
-    buf = bytearray(data)
-    m_view = memoryview(buf)
-
-    num_qwords = n // 8
-    qwords = struct.unpack_from(f'>{num_qwords}Q', m_view, 0)
-    struct.pack_into(f'>{num_qwords}Q', m_view, 0, *(q ^ mask_64 for q in qwords))
-
-    tail_off = num_qwords * 8
-    rem = n - tail_off
-    if rem > 0:
-        mask_rep = (mask * 3)[:rem]
-        tail_xor = (int.from_bytes(m_view[tail_off:], 'big') ^
-                    int.from_bytes(mask_rep, 'big')).to_bytes(rem, 'big')
-        buf[tail_off:] = tail_xor
-
-    return bytes(buf)
+    mask_rep = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, 'big') ^
+            int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
 
 
 def set_sock_opts(transport, buffer_size):
@@ -110,19 +91,10 @@ class RawWebSocket:
         if sni is None:
             sni = domain
 
-        if getattr(proxy_config, 'upstream_proxy', ''):
-            from .upstream import open_upstream_connection
-            reader, writer = await open_upstream_connection(
-                host, 443, proxy_config.upstream_proxy,
-                ssl_ctx=_ssl_ctx, server_hostname=sni, timeout=timeout
-            )
-        else:
-            is_ipv6 = ":" in host
-            family = _socket.AF_INET6 if is_ipv6 else _socket.AF_INET
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, 443, ssl=_ssl_ctx,
-                                        server_hostname=sni, family=family),
-                timeout=min(timeout, 10))
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, 443, ssl=_ssl_ctx,
+                                    server_hostname=sni),
+            timeout=min(timeout, 10))
         
         set_sock_opts(writer.transport, proxy_config.buffer_size)
 
@@ -189,13 +161,9 @@ class RawWebSocket:
     async def send_batch(self, parts: List[bytes]):
         if self._closed:
             raise ConnectionError("WebSocket closed")
-        if not parts:
-            return
-        if len(parts) == 1:
-            self.writer.write(self._build_frame(self.OP_BINARY, parts[0], mask=True))
-        else:
-            frames = b''.join(self._build_frame(self.OP_BINARY, part, mask=True) for part in parts)
-            self.writer.write(frames)
+        for part in parts:
+            self.writer.write(
+                self._build_frame(self.OP_BINARY, part, mask=True))
         await self.writer.drain()
 
     async def recv(self) -> Optional[bytes]:
@@ -271,7 +239,7 @@ class RawWebSocket:
         if not payload or len(payload) < 2:
             return None, ''
         try:
-            code = (payload[0] << 8) | payload[1]
+            code = int.from_bytes(payload[:2], 'big')
             text = payload[2:].decode('utf-8', errors='replace')
             name = cls._WS_CLOSE_REASONS.get(code)
             return code, f"{text} ({name})" if name else text
@@ -285,16 +253,16 @@ class RawWebSocket:
         fb = 0x80 | opcode
         if not mask:
             if length < 126:
-                return bytes([fb, length]) + data
+                return _st_BB.pack(fb, length) + data
             if length < 65536:
-                return bytes([fb, 126, (length >> 8) & 0xFF, length & 0xFF]) + data
+                return _st_BBH.pack(fb, 126, length) + data
             return _st_BBQ.pack(fb, 127, length) + data
         mask_key = os.urandom(4)
         masked = _xor_mask(data, mask_key)
         if length < 126:
-            return bytes([fb, 0x80 | length]) + mask_key + masked
+            return _st_BB4s.pack(fb, 0x80 | length, mask_key) + masked
         if length < 65536:
-            return bytes([fb, 0x80 | 126, (length >> 8) & 0xFF, length & 0xFF]) + mask_key + masked
+            return _st_BBH4s.pack(fb, 0x80 | 126, length, mask_key) + masked
         return _st_BBQ4s.pack(fb, 0x80 | 127, length, mask_key) + masked
 
     async def _read_frame(self) -> Tuple[int, bytes, bool]:
@@ -303,8 +271,7 @@ class RawWebSocket:
         opcode = hdr[0] & 0x0F
         length = hdr[1] & 0x7F
         if length == 126:
-            raw_len = await self.reader.readexactly(2)
-            length = (raw_len[0] << 8) | raw_len[1]
+            length = _st_H.unpack(await self.reader.readexactly(2))[0]
         elif length == 127:
             length = _st_Q.unpack(await self.reader.readexactly(8))[0]
         if length > self.MAX_MESSAGE_LEN:

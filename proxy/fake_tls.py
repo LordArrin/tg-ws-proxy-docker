@@ -110,21 +110,17 @@ def build_server_hello(secret: bytes, client_random: bytes, session_id: bytes) -
 
 
 def wrap_tls_record(data: bytes) -> bytes:
-    n = len(data)
-    if not n:
-        return b''
-    if n <= TLS_APPDATA_MAX:
-        return b'\x17\x03\x03' + struct.pack('>H', n) + data
-
-    out = bytearray()
+    parts = []
     offset = 0
-    while offset < n:
-        chunk_len = min(TLS_APPDATA_MAX, n - offset)
-        out.extend(b'\x17\x03\x03')
-        out.extend(struct.pack('>H', chunk_len))
-        out.extend(data[offset:offset + chunk_len])
-        offset += chunk_len
-    return bytes(out)
+    while offset < len(data):
+        chunk = data[offset:offset + TLS_APPDATA_MAX]
+        parts.append(
+            b'\x17\x03\x03'
+            + struct.pack('>H', len(chunk))
+            + chunk
+        )
+        offset += len(chunk)
+    return b''.join(parts)
 
 
 class FakeTlsStream:

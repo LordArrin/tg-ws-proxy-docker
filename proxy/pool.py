@@ -14,30 +14,24 @@ from .utils import ws_domains, DC_DEFAULT_IPS
 
 log = logging.getLogger('tg-mtproto-proxy')
 
+# TODO: domains handling is broken: wrong is_media flag causes tcp_reset after handshake,
+# but initial connection is still established no matter what is is_media flag is set to
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
     WS_POOL_CHECK_INTERVAL = 5.0
-    REFILL_BACKOFF_INITIAL = 60.0
+    REFILL_BACKOFF_INITIAL = 1.0
     REFILL_BACKOFF_MAX = 3600.0
     
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
         self._rotating: Dict[Tuple[int, bool], asyncio.Task] = {}
-        self._tasks: Set[asyncio.Task] = set()
         self._refill_failures: Dict[Tuple[int, bool], int] = {}
         self._refill_after: Dict[Tuple[int, bool], float] = {}
-        self.try_fronting_first = False
-
-    def _create_task(self, coro) -> asyncio.Task:
-        task = asyncio.create_task(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return task
+        self.try_fronting_first = True
 
     async def get(self, dc: int, is_media: bool,
-                  target_ip: str, domains: List[str],
-                  *, allow_refill: bool = True
+                  target_ip: str, domains: List[str]
                   ) -> Optional[RawWebSocket]:
         key = (dc, is_media)
         now = time.monotonic()
@@ -51,19 +45,17 @@ class _WsPool:
             age = now - created
             if (age > self.WS_POOL_MAX_AGE or ws._closed
                     or ws.writer.transport.is_closing()):
-                self._quiet_close(ws)
+                asyncio.create_task(self._quiet_close(ws))
                 continue
             stats.pool_hits += 1
             log.debug("WS pool hit DC%d%s (age=%.1fs, left=%d)",
                       dc, 'm' if is_media else '', age, len(bucket))
             self.report_success(dc, is_media)
-            if allow_refill:
-                self._schedule_refill(key, target_ip, domains)
+            self._schedule_refill(key, target_ip, domains)
             return ws
 
         stats.pool_misses += 1
-        if allow_refill:
-            self._schedule_refill(key, target_ip, domains)
+        self._schedule_refill(key, target_ip, domains)
         return None
 
     def _schedule_refill(self, key, target_ip, domains):
@@ -71,7 +63,7 @@ class _WsPool:
                 or time.monotonic() < self._refill_after.get(key, 0)):
             return
         self._refilling.add(key)
-        self._create_task(self._refill(key, target_ip, domains))
+        asyncio.create_task(self._refill(key, target_ip, domains))
 
     def report_success(self, dc: int, is_media: bool) -> None:
         key = (dc, is_media)
@@ -86,7 +78,7 @@ class _WsPool:
             if needed <= 0:
                 return
             connected = 0
-            tasks = [self._create_task(
+            tasks = [asyncio.create_task(
                 self._connect_one(target_ip, domains))
                 for _ in range(needed)]
             for t in tasks:
@@ -105,7 +97,7 @@ class _WsPool:
                 self._refill_failures[key] = failures
                 delay = min(
                     self.REFILL_BACKOFF_INITIAL
-                    * (2 ** min(failures - 1, 6)),
+                    * (2 ** min(failures - 1, 12)),
                     self.REFILL_BACKOFF_MAX,
                 )
                 self._refill_after[key] = time.monotonic() + delay
@@ -120,8 +112,8 @@ class _WsPool:
     def _schedule_rotation(self, key, target_ip, domains):
         if key in self._rotating:
             return
-        task = self._create_task(self._rotate(key, target_ip, domains))
-        self._rotating[key] = task
+        self._rotating[key] = asyncio.create_task(
+            self._rotate(key, target_ip, domains))
 
     async def _rotate(self, key, target_ip, domains):
         dc, is_media = key
@@ -153,10 +145,12 @@ class _WsPool:
 
                 if expired:
                     for ws in expired:
-                        self._quiet_close(ws)
+                        asyncio.create_task(self._quiet_close(ws))
                     log.debug(
                         "WS pool rotated DC%d%s: %d stale, %d ready",
                         dc, 'm' if is_media else '', len(expired), len(bucket))
+
+                if len(bucket) < proxy_config.pool_size:
                     self._schedule_refill(key, target_ip, domains)
         finally:
             if self._rotating.get(key) is asyncio.current_task():
@@ -173,7 +167,7 @@ class _WsPool:
                     target_ip, domain, timeout=8)
                 self.try_fronting_first = False
                 return ws
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, ConnectionResetError):
                 if self.try_fronting_first:
                     return None
                 return await self._connect_fronted(target_ip, domain)
@@ -196,10 +190,9 @@ class _WsPool:
         self.try_fronting_first = True
         return ws
 
-    def _quiet_close(self, ws):
+    async def _quiet_close(self, ws):
         try:
-            ws._closed = True
-            ws.writer.close()
+            await ws.close()
         except Exception:
             pass
 
@@ -213,25 +206,13 @@ class _WsPool:
         log.info("WS pool warmup started for %d DC(s)", len(proxy_config.dc_redirects))
 
     def reset(self):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        for bucket in list(self._idle.values()):
-            while bucket:
-                ws = bucket.popleft()[0]
-                self._quiet_close(ws)
-
-        for task in list(self._tasks):
-            if not task.done():
-                if loop is None or task.get_loop() is loop:
-                    task.cancel()
-
+        loop = asyncio.get_running_loop()
+        for task in self._rotating.values():
+            if not task.done() and task.get_loop() is loop:
+                task.cancel()
         self._idle.clear()
         self._refilling.clear()
         self._rotating.clear()
-        self._tasks.clear()
         self._refill_failures.clear()
         self._refill_after.clear()
         self.try_fronting_first = False
@@ -244,14 +225,7 @@ class _CfWorkerPool:
     def __init__(self):
         self._idle: Dict[int, deque] = {}
         self._refilling: Set[int] = set()
-        self._tasks: Set[asyncio.Task] = set()
         self._exhausted_until: Dict[str, float] = {}
-
-    def _create_task(self, coro) -> asyncio.Task:
-        task = asyncio.create_task(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return task
 
     async def get(self, dc: int, fallback_dst: str,
                   worker_domains: List[str]
@@ -267,7 +241,7 @@ class _CfWorkerPool:
             age = now - created
             if (age > self.WS_POOL_MAX_AGE or ws._closed
                     or ws.writer.transport.is_closing()):
-                self._quiet_close(ws)
+                asyncio.create_task(self._quiet_close(ws))
                 continue
             stats.cf_pool_hits += 1
             log.debug(
@@ -283,7 +257,7 @@ class _CfWorkerPool:
         if dc in self._refilling:
             return
         self._refilling.add(dc)
-        self._create_task(self._refill(
+        asyncio.create_task(self._refill(
             dc, fallback_dst, list(worker_domains)))
 
     async def _refill(self, dc, fallback_dst, worker_domains):
@@ -337,12 +311,21 @@ class _CfWorkerPool:
         return domains
 
     def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        return
+        return  # TODO: check status code after daily limit reached
+        if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
+            return
 
-    def _quiet_close(self, ws):
+        now = time.time()
+        if self._exhausted_until.get(worker_domain, 0) > now:
+            return
+        exhausted_until = now + (86400 - (now % 86400))
+        self._exhausted_until[worker_domain] = exhausted_until
+        log.warning(
+            "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
+
+    async def _quiet_close(self, ws):
         try:
-            ws._closed = True
-            ws.writer.close()
+            await ws.close()
         except Exception:
             pass
 
@@ -362,28 +345,8 @@ class _CfWorkerPool:
         log.info("CF worker pool warmup started for %d DC(s)", len(cf_fallbacks))
 
     def reset(self):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        for bucket in list(self._idle.values()):
-            while bucket:
-                ws = bucket.popleft()[0]
-                if loop and not ws._closed:
-                    try:
-                        loop.create_task(self._quiet_close(ws))
-                    except Exception:
-                        pass
-
-        for task in list(self._tasks):
-            if not task.done():
-                if loop is None or task.get_loop() is loop:
-                    task.cancel()
-
         self._idle.clear()
         self._refilling.clear()
-        self._tasks.clear()
         self._exhausted_until.clear()
 
 

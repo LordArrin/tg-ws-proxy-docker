@@ -82,7 +82,7 @@ except ImportError:
                 self.iv = bytes(iv)
 
     class _CtrStream:
-        __slots__ = ("_ctx", "_buf", "_buflen")
+        __slots__ = ("_ctx",)
 
         def __init__(self, key: bytes, iv: bytes):
             ctx = _libcrypto.EVP_CIPHER_CTX_new()
@@ -94,23 +94,17 @@ except ImportError:
                 _libcrypto.EVP_CIPHER_CTX_free(ctx)
                 self._ctx = None
                 raise RuntimeError("EVP_EncryptInit_ex failed")
-            self._buf = None
-            self._buflen = 0
 
         def update(self, data: bytes) -> bytes:
             if not data:
                 return b""
-            n = len(data)
-            needed = n + 16
-            if self._buflen < needed:
-                self._buf = ctypes.create_string_buffer(needed)
-                self._buflen = needed
             outlen = ctypes.c_int(0)
+            buf = ctypes.create_string_buffer(len(data) + 16)
             if _libcrypto.EVP_EncryptUpdate(
-                self._ctx, self._buf, ctypes.byref(outlen), bytes(data), n
+                self._ctx, buf, ctypes.byref(outlen), bytes(data), len(data)
             ) != 1:
                 raise RuntimeError("EVP_EncryptUpdate failed")
-            return self._buf.raw[:outlen.value]
+            return buf.raw[:outlen.value]
 
         def __del__(self):
             ctx = getattr(self, "_ctx", None)
