@@ -736,6 +736,7 @@ def main():
 
     console = logging.StreamHandler()
     console.setFormatter(log_fmt)
+    console.addFilter(DomainCensorFilter())
     root.addHandler(console)
 
     if args.log_file:
@@ -746,6 +747,7 @@ def main():
             backups=args.log_backups,
         )
         fh.setFormatter(log_fmt)
+        fh.addFilter(DomainCensorFilter())
         root.addHandler(fh)
 
     logging.getLogger('asyncio').setLevel(logging.WARNING)

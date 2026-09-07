@@ -2,6 +2,8 @@ import socket as _socket
 import urllib.request
 import http.client
 import ssl
+import logging
+import re
 
 import certifi
 
@@ -83,6 +85,32 @@ def get_link_host(host: str) -> Optional[str]:
         return link_host
     else:
         return host
+
+
+class DomainCensorFilter(logging.Filter):
+    domain_pattern = re.compile(
+        r'(?<![\w-])(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+'
+        r'[a-zA-Z]{2,}(?![\w-])'
+    )
+
+    def _censor_match(self, match):
+        domain = match.group()
+        normalized = domain.casefold().rstrip('.')
+        if normalized == 'telegram.org' or normalized.endswith('.telegram.org') or normalized.endswith('.log'):
+            return domain
+        parts = domain.split('.')
+        if len(parts) < 2:
+            return domain
+        return '.'.join(
+            part if i == len(parts) - 1 else
+            part[:len(part) // 2] + '*' * (len(part) - len(part) // 2)
+            for i, part in enumerate(parts)
+        )
+
+    def filter(self, record):
+        record.msg = self.domain_pattern.sub(self._censor_match, record.getMessage())
+        record.args = ()
+        return True
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
