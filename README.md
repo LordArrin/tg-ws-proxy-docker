@@ -1,4 +1,4 @@
-Готовые образы: https://hub.docker.com/r/lordarrin/tg-ws-proxy
+Готовые образы: ghcr.io/lordarrin/tg-ws-proxy:latest
 
 Образ Docker для личного использования. Все права принадлежат оригинальному автору: https://github.com/Flowseal/tg-ws-proxy
 
