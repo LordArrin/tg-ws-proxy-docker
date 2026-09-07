@@ -58,7 +58,6 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app proxy ./proxy
-COPY --chown=app:app utils ./utils
 COPY --chown=app:app LICENSE ./
 COPY entrypoint.sh /entrypoint.sh
 
