@@ -22,3 +22,16 @@
 | `SOCKS_USER` | | *(Опционально)* Имя пользователя для аутентификации SOCKS5. Если указано вместе с `SOCKS_PASS`, аутентификация становится строго обязательной. |
 | `SOCKS_PASS` | | *(Опционально)* Пароль для аутентификации SOCKS5. |
 | `SOCKS_CONNECT_TIMEOUT` | `10` | Таймаут установки WebSocket-соединения с [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) (в секундах). |
+
+## Docker Images
+
+Multi-architecture Telegram MTProto proxy images with WebSocket transport, built weekly with latest security patches.
+
+Uses Python 3.15-rc to include the latest vulnerability fixes.
+
+### Available Tags
+
+| Tag | Architectures | Description |
+|-----|---------------|-------------|
+| `latest` | amd64 + arm64 | Most recent weekly build |
+| `YYYY-MM-DD` | amd64 + arm64 | Pinned to specific build date |
