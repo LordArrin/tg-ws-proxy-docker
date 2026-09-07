@@ -48,3 +48,51 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.date.outputs.date }}
           cache-from: type=gha,scope=tg-proxy
           cache-to: type=gha,mode=max,scope=tg-proxy
+
+  sync-to-dockerhub:
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Set date tag
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Log in to GHCR
+        run: |
+          skopeo login ghcr.io \
+            --username ${{ github.repository_owner }} \
+            --password ${{ secrets.GHCR_TOKEN }}
+
+      - name: Log in to Docker Hub
+        run: |
+          skopeo login docker.io \
+            --username ${{ secrets.DOCKERHUB_USERNAME }} \
+            --password ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Sync images to Docker Hub
+        run: |
+          IMAGE="${{ env.IMAGE_NAME }}"
+          DATE="${{ steps.date.outputs.date }}"
+          
+          echo "Syncing multi-architecture images to Docker Hub..."
+          
+          echo "Syncing $IMAGE:latest ..."
+          skopeo copy --all \
+            "docker://ghcr.io/$IMAGE:latest" \
+            "docker://docker.io/$IMAGE:latest"
+          
+          echo "Syncing $IMAGE:$DATE ..."
+          skopeo copy --all \
+            "docker://ghcr.io/$IMAGE:$DATE" \
+            "docker://docker.io/$IMAGE:$DATE"
+          
+          echo "All images synced successfully to Docker Hub"
