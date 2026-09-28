@@ -133,24 +133,20 @@ class WsConnectionPool:
         return None
 
     def release(self, ws: Optional[RawWebSocket], target_ip: str, target_port: int) -> None:
+        # WS tunnels for raw TCP proxying cannot be safely pooled because
+        # we cannot guarantee that the underlying TCP connection to the target
+        # is closed by the target server when the SOCKS client disconnects.
+        # Returning a "dirty" tunnel to the pool causes TLS state corruption
+        # when cURL reuses it for a new connection.
         if ws is None or ws._closed:
             return
-        try:
-            if ws.writer.transport.is_closing():
-                return
-        except Exception:
-            return
         
-        key = (target_ip, target_port)
-        bucket = self._idle.setdefault(key, deque())
-        
-        if len(bucket) >= POOL_SIZE_PER_TARGET or self._total_connections() >= POOL_MAX_TOTAL:
-            asyncio.create_task(self._quiet_close(ws))
-            return
-        
-        bucket.append((ws, time.monotonic()))
-        log.debug("Released WS to pool for %s:%d (pool: %d/%d)",
-                  target_ip, target_port, self._total_connections(), POOL_MAX_TOTAL)
+        # Force close instead of returning to the pool.
+        # The pool logic for raw SOCKS5 proxying leads to sending new TLS ClientHellos
+        # over already established TCP sessions to the target server.
+        asyncio.create_task(self._quiet_close(ws))
+        log.debug("Closed WS for %s:%d instead of pooling to prevent TLS state corruption",
+                  target_ip, target_port)
 
     async def cleanup(self):
         async with self._lock:
@@ -503,7 +499,7 @@ async def _run() -> None:
     log.info(" Auth    : %s", "ENABLED" if REQUIRE_AUTH else "DISABLED")
     log.info(" Workers : %s", ", ".join(WORKER_DOMAINS))
     log.info(" Note    : Only port 443 supported (Worker limitation)")
-    log.info(" Pool    : max_age=%.0fs, max_total=%d, per_target=%d",
+    log.info(" Pool    : max_age=%.0fs, max_total=%d, per_target=%d (Disabled for raw TCP)",
              POOL_MAX_AGE, POOL_MAX_TOTAL, POOL_SIZE_PER_TARGET)
     log.info("=" * 54)
 
