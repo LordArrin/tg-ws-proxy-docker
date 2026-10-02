@@ -1,4 +1,4 @@
-FROM python:3.15-rc-alpine3.24 AS builder
+FROM python:3.15-rc-alpine AS builder
 
 RUN apk add --no-cache \
     build-base \
@@ -26,11 +26,11 @@ RUN "$VIRTUAL_ENV/bin/pip" install --upgrade --no-cache-dir -r requirements.txt 
     && find "$VIRTUAL_ENV" -name "*.pyc" -delete \
     && find "$VIRTUAL_ENV" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-FROM python:3.15-rc-alpine3.24 AS runtime
+FROM python:3.15-rc-alpine AS runtime
 
 LABEL org.opencontainers.image.title="Telegram WebSocket Proxy" \
       org.opencontainers.image.description="MTProto proxy with WebSocket transport" \
-      org.opencontainers.image.version="1.11.3" \
+      org.opencontainers.image.version="1.11.4" \
       org.opencontainers.image.source="https://github.com/LordArrin/tg-ws-proxy-docker"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

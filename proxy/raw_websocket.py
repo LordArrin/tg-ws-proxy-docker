@@ -1,6 +1,4 @@
 import os
-import ssl
-import certifi
 import logging
 import base64
 import struct
@@ -9,6 +7,7 @@ import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
+from .utils import create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -22,9 +21,8 @@ _st_BBQ4s = struct.Struct('>BBQ4s')
 _st_H = struct.Struct('>H')
 _st_Q = struct.Struct('>Q')
 
-_ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-_ssl_ctx_fronting = ssl.create_default_context(cafile=certifi.where())
-_ssl_ctx_fronting.check_hostname = False
+_ssl_ctx = create_ssl_context()
+_ssl_ctx_fronting = create_ssl_context(check_hostname=False)
 
 class WsHandshakeError(Exception):
     def __init__(self, status_code: int, status_line: str,
@@ -88,7 +86,7 @@ class RawWebSocket:
     async def connect(host: str, domain: str, timeout: float = 10.0,
                       path: str = '/apiws', *,
                       sni: Optional[str] = None, secure = True) -> 'RawWebSocket':
-        ssl = _ssl_ctx_fronting if sni else _ssl_ctx
+        ssl_context = _ssl_ctx_fronting if sni else _ssl_ctx
 
         if sni is None:
             sni = domain
@@ -97,7 +95,7 @@ class RawWebSocket:
             (
                 asyncio.open_connection(
                     host, 443,
-                    ssl=ssl,
+                    ssl=ssl_context,
                     server_hostname=sni,
                 )
                 if secure
