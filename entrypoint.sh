@@ -27,6 +27,10 @@ else
     fi
 fi
 
+if [ "${NO_H2:-}" = "true" ]; then
+    set -- "$@" --no-h2
+fi
+
 if [ "${SOCKS_ENABLED:-false}" = "true" ] && [ -n "${CFPROXY_WORKER_DOMAIN:-}" ]; then
     echo "[Entrypoint] Starting SOCKS5 proxy on port ${SOCKS_PORT:-1080}..."
     /opt/venv/bin/python -u proxy/socks.py &
