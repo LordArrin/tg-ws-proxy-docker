@@ -12,10 +12,10 @@
 | `PROXY_DC_IPS` | `2:149.154.167.220 4:149.154.167.220` | Целевой IP для DC (можно указать несколько раз) |
 | `PROXY_BUF` | `4096` | Размер буфера в КБ |
 | `PROXY_POOL_SIZE` | `2` | Количество заготовленных соединений на каждый DC |
-| `NO_CFPROXY` | `false` | Отключить попытку [проксирования через Cloudflare](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
+| `NO_CFPROXY` | `false` | Отключить попытку [проксирования через Cloudflare](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfProxy.md) |
 | `NO_H2` | `false` | Отключить новый [экспериментальный режим проксирования медиа](https://github.com/Flowseal/tg-ws-proxy/discussions/1391) |
-| `CFPROXY_DOMAIN` | | Указать свой [домен](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) для проксирования через Cloudflare. |
-| `CFPROXY_WORKER_DOMAIN` | | Указать свой [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) для проксирования. Можно указать несколько доменов, разделив их пробелом (например: `worker1.dev worker2.dev`). |
+| `CFPROXY_DOMAIN` | | Указать свой [домен](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfProxy.md) для проксирования через Cloudflare. |
+| `CFPROXY_WORKER_DOMAIN` | | Указать свой [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md) для проксирования. Можно указать несколько доменов, разделив их пробелом (например: `worker1.dev worker2.dev`). |
 | `KEEPALIVE` | `false` | Включить WS keepalive пинги для предотвращения закрытия соединений при простое. Экспериментальная опция, отключена по умолчанию. Для работы требуется настроить [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
 | `SOCKS_ENABLED` | `false` | Включить встроенный SOCKS5 прокси с туннелированием трафика через [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
 | `SOCKS_PORT` | `1080` | Порт для прослушивания SOCKS5 прокси. |
