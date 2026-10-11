@@ -34,6 +34,7 @@ from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
+from .event_loop import install_self_pipe_guard
 from ._aes import Cipher, algorithms, modes
 
 
@@ -304,7 +305,7 @@ async def _handle_client(reader, writer, secret: bytes):
                      label, dc, media_tag)
             splitter_fb = None
             try:
-                splitter_fb = MsgSplitter(relay_init, proto_int)
+                splitter_fb = MsgSplitter(proto_int)
             except Exception:
                 pass
             ok = await do_fallback(
@@ -322,7 +323,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         splitter = None
         try:
-            splitter = MsgSplitter(relay_init, proto_int)
+            splitter = MsgSplitter(proto_int)
             log.debug("[%s] MsgSplitter activated for proto 0x%08X",
                       label, proto_int)
         except Exception:
@@ -365,6 +366,7 @@ _client_tasks: Set[asyncio.Task] = set()
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
     global _server_instance, _server_stop_event, cf_h2_pool
+    install_self_pipe_guard(asyncio.get_running_loop())
     _server_stop_event = stop_event
 
     reset_tcp_backoff()
@@ -539,6 +541,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 await _quiet_cancel(task)
         await server.wait_closed()
         await ws_pool.close()
+        await cf_worker_pool.close()
         if cf_h2_pool is not None:
             await cf_h2_pool.close()
             cf_h2_pool = None
