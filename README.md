@@ -22,17 +22,18 @@
 | `SOCKS_HOST` | `0.0.0.0` | Хост для прослушивания SOCKS5 прокси. |
 | `SOCKS_USER` | | *(Опционально)* Имя пользователя для аутентификации SOCKS5. Если указано вместе с `SOCKS_PASS`, аутентификация становится строго обязательной. |
 | `SOCKS_PASS` | | *(Опционально)* Пароль для аутентификации SOCKS5. |
-| `SOCKS_CONNECT_TIMEOUT` | `10` | Таймаут установки WebSocket-соединения с [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) (в секундах). |
+| `SOCKS_CONNECT_BUDGET` | `3.5` | Бюджет установки WS-соединения с [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md) (сек). |
+| `SOCKS_DNS_TIMEOUT` | `3` | Таймаут DNS-резолва целевого хоста (сек). |
+| `SOCKS_MAX_CONNS` | `6` | Максимум одновременных SOCKS5-туннелей. |
+| `SOCKS_QUEUE_TIMEOUT` | `1.5` | Ожидание свободного слота при насыщении (сек); `0` — сразу отказ. |
+| `SOCKS_IDLE_TIMEOUT` | `180` | Разрыв туннеля при простое обоих направлений (сек). |
+| `SOCKS_PING_INTERVAL` | `30` | WS-ping при простое против закрытия соединения CF (сек); `0` — выкл. |
+| `SOCKS_PREWARM_PER_TARGET` | `1` | Число прогретых WS на активный target; `0` — выкл. прогрев. |
+| `SOCKS_PREWARM_INTERVAL` | `20` | Период добора прогретых соединений (сек). |
+| `SOCKS_PREWARM_CONNECT_BUDGET` | `8` | Бюджет WS-handshake для фонового прогрева (сек). |
+| `SOCKS_TARGET_TTL` | `300` | Греются только targets, использованные за это время (сек). |
+| `SOCKS_POOL_MAX_AGE` | `90` | Максимальный срок жизни прогретого WS (сек). |
+| `SOCKS_POOL_MAX_TOTAL` | `8` | Общий потолок прогретых WS. |
+| `SOCKS_BUF_KB` | `256` | Размер буфера сокета SOCKS5 (КБ). |
 
-## Docker Images
-
-Multi-architecture Telegram MTProto proxy images with WebSocket transport, built weekly with latest security patches.
-
-Uses Python 3.15-rc to include the latest vulnerability fixes.
-
-### Available Tags
-
-| Tag | Architectures | Description |
-|-----|---------------|-------------|
-| `latest` | amd64 + arm64 | Most recent weekly build |
-| `YYYY-MM-DD` | amd64 + arm64 | Pinned to specific build date |
+> `SOCKS_CONNECT_TIMEOUT` из прежних версий заменён на `SOCKS_CONNECT_BUDGET`. Все новые параметры опциональны — без них поведение соответствует дефолтам.
