@@ -4,10 +4,51 @@ import signal
 import socket
 import sys
 import threading
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 
 
 log = logging.getLogger('tg-mtproto-proxy')
+
+
+class ClientStreamProtocol(asyncio.StreamReaderProtocol):
+    def __init__(self, client_cb):
+        super().__init__(asyncio.StreamReader(), client_cb)
+        self.cancel_setup = None
+
+    def eof_received(self):
+        keep_open = super().eof_received()
+        if self.cancel_setup is not None:
+            self.cancel_setup(False)
+        return keep_open
+
+    def connection_lost(self, exc):
+        super().connection_lost(exc)
+        if self.cancel_setup is not None:
+            self.cancel_setup(True)
+
+
+@contextmanager
+def client_setup(reader, writer):
+    """Cancel an upstream dial when its client leaves, without reading client bytes."""
+    if reader.at_eof() or writer.is_closing():
+        raise asyncio.CancelledError()
+    protocol = writer.transport.get_protocol()
+    if not isinstance(protocol, ClientStreamProtocol):
+        yield
+        return
+
+    task = asyncio.current_task()
+
+    def cancel(lost):
+        if lost or reader.at_eof():
+            protocol.cancel_setup = None
+            task.cancel()
+
+    protocol.cancel_setup = cancel
+    try:
+        yield
+    finally:
+        protocol.cancel_setup = None
 
 
 def _close_proactor_socket(transport, exc):
@@ -38,6 +79,16 @@ def install_proactor_socket_guard(loop):
     if sys.platform == 'win32' and isinstance(loop, asyncio.ProactorEventLoop):
         from asyncio.proactor_events import _ProactorSocketTransport
         _ProactorSocketTransport._call_connection_lost = _close_proactor_socket
+
+
+def abort_transport(transport):
+    transport.abort()
+    if sys.platform == 'win32':
+        from asyncio.proactor_events import _ProactorSocketTransport
+        if (isinstance(transport, _ProactorSocketTransport)
+                and getattr(transport, '_write_fut', None) is not None):
+            transport._closing = False
+            transport.abort()
 
 
 def _replace_self_pipe(loop):

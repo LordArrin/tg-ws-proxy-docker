@@ -7,6 +7,7 @@ import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
+from .event_loop import abort_transport
 from .utils import create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -54,6 +55,22 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
             int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
 
 
+async def _wait_close(awaitable, timeout, *, cancel_pending=True):
+    # wait_for() can lose external cancellation when its task finishes at the
+    # same time on Python < 3.12. wait() leaves cancellation with the caller.
+    task = asyncio.ensure_future(awaitable)
+    completion = asyncio.gather(task, return_exceptions=True)
+    try:
+        done, _ = await asyncio.wait((completion,), timeout=timeout)
+        if not done:
+            raise asyncio.TimeoutError()
+        return task.result()
+    finally:
+        if cancel_pending and not task.done():
+            task.cancel()
+            await completion
+
+
 def set_sock_opts(transport, buffer_size):
     sock = transport.get_extra_info('socket')
     if sock is None:
@@ -81,6 +98,7 @@ class RawWebSocket:
     OP_PONG = 0xA
 
     MAX_MESSAGE_LEN = 16 * 1024 * 1024
+    CLOSE_TIMEOUT = 2.0
 
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter):
@@ -100,6 +118,8 @@ class RawWebSocket:
 
         port = 443 if secure else 80
         tls_options = {'ssl': ssl_context, 'server_hostname': sni} if secure else {}
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
@@ -122,12 +142,11 @@ class RawWebSocket:
             )
 
             writer.write(req.encode())
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), deadline - loop.time())
 
             response_lines: list[str] = []
             while True:
-                line = await asyncio.wait_for(reader.readline(),
-                                              timeout=timeout)
+                line = await asyncio.wait_for(reader.readline(), deadline - loop.time())
                 if line in (b'\r\n', b'\n', b''):
                     break
                 response_lines.append(
@@ -156,7 +175,7 @@ class RawWebSocket:
                                     location=headers.get('location'))
         except BaseException as exc:
             if writer is not None:
-                writer.close()
+                writer.transport.abort()
             if isinstance(exc, Exception) and log.isEnabledFor(logging.DEBUG):
                 if writer is not None:
                     stage = 'ws_upgrade'
@@ -169,6 +188,14 @@ class RawWebSocket:
                     local = remote = None
                 log.debug('WS setup failed: host=%s port=%d stage=%s local=%s remote=%s error=%r',
                           host, port, stage, local, remote, exc)
+            raise
+
+    async def send_init(self, data: bytes):
+        try:
+            await asyncio.wait_for(self.send(data), timeout=10)
+        except BaseException:
+            self._closed = True
+            self.writer.transport.abort()
             raise
 
     async def send(self, data: bytes):
@@ -238,13 +265,21 @@ class RawWebSocket:
                 try:
                     self.writer.write(
                         self._build_frame(self.OP_CLOSE, b'', mask=True))
-                    await self.writer.drain()
+                    await _wait_close(self.writer.drain(), self.CLOSE_TIMEOUT)
                 except Exception:
                     pass
         finally:
             try:
                 self.writer.close()
-                await self.writer.wait_closed()
+                await _wait_close(self.writer.wait_closed(), self.CLOSE_TIMEOUT,
+                                  cancel_pending=False)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                try:
+                    abort_transport(self.writer.transport)
+                except Exception:
+                    pass
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
             except Exception:
                 pass
 
