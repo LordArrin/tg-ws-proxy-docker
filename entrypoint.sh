@@ -12,6 +12,10 @@ if [ -n "${PROXY_SECRET:-}" ]; then
     set -- "$@" --secret "$PROXY_SECRET"
 fi
 
+if [ -n "${FAKE_TLS_DOMAIN:-}" ]; then
+    set -- "$@" --fake-tls-domain "$FAKE_TLS_DOMAIN"
+fi
+
 for dc in ${PROXY_DC_IPS:-}; do
     set -- "$@" --dc-ip "$dc"
 done
