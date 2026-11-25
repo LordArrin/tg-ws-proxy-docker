@@ -16,6 +16,7 @@
 | `NO_H2` | `false` | Отключить новый [экспериментальный режим проксирования медиа](https://github.com/Flowseal/tg-ws-proxy/discussions/1391) |
 | `CFPROXY_DOMAIN` | | Указать свой [домен](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfProxy.md) для проксирования через Cloudflare. |
 | `CFPROXY_WORKER_DOMAIN` | | Указать свой [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md) для проксирования. Можно указать несколько доменов, разделив их пробелом (например: `worker1.dev worker2.dev`). |
+| `FAKE_TLS_DOMAIN` | | Домен для Fake TLS (ee-secret), например `www.microsoft.com`. |
 | `KEEPALIVE` | `false` | Включить WS keepalive пинги для предотвращения закрытия соединений при простое. Экспериментальная опция, отключена по умолчанию. Для работы требуется настроить [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
 | `SOCKS_ENABLED` | `false` | Включить встроенный SOCKS5 прокси с туннелированием трафика через [CF worker](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md). |
 | `SOCKS_PORT` | `1080` | Порт для прослушивания SOCKS5 прокси. |
